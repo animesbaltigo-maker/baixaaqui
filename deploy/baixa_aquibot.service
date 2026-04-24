@@ -1,0 +1,26 @@
+[Unit]
+Description=Baixa Aqui Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=baixa
+Group=baixa
+WorkingDirectory=/opt/baixa-aquibot
+EnvironmentFile=/opt/baixa-aquibot/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/baixa-aquibot/.venv/bin/python /opt/baixa-aquibot/bot.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+KillSignal=SIGINT
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/baixa-aquibot /var/lib/baixa-aquibot /tmp/baixa-aquibot
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

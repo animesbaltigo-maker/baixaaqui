@@ -47,10 +47,19 @@ ProgressWrapper: TypeAlias = Callable[[str], str]
 
 
 class ProgressEditor:
-    def __init__(self, message, label: str, interval: float, wrapper: ProgressWrapper | None = None, buttons=None) -> None:
+    def __init__(
+        self,
+        message,
+        label: str,
+        interval: float,
+        wrapper: ProgressWrapper | None = None,
+        buttons=None,
+        percent_step: int = 5,
+    ) -> None:
         self.message = message
         self.label = label
         self.interval = max(interval, 0.75)
+        self.percent_step = max(1, percent_step)
         self.wrapper = wrapper
         self.buttons = [] if buttons is None else buttons
         self.started_at = time.monotonic()
@@ -68,7 +77,11 @@ class ProgressEditor:
         if total and current >= total:
             should_edit = True
         else:
-            should_edit = now - self._last_edit >= self.interval or percent_bucket > self._last_percent
+            should_edit = (
+                now - self._last_edit >= self.interval
+                or self._last_percent < 0
+                or percent_bucket >= self._last_percent + self.percent_step
+            )
 
         if not should_edit:
             return
@@ -95,7 +108,11 @@ class ProgressEditor:
             if total and current >= total:
                 should_schedule = True
             else:
-                should_schedule = now - self._last_schedule >= self.interval or percent_bucket > self._last_percent
+                should_schedule = (
+                    now - self._last_schedule >= self.interval
+                    or self._last_percent < 0
+                    or percent_bucket >= self._last_percent + self.percent_step
+                )
 
             if should_schedule:
                 self._last_schedule = now

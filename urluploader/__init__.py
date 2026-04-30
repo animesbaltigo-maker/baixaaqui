@@ -1,1 +1,0 @@
-"""URL upload bot package."""

@@ -1812,8 +1812,10 @@ def caption_for_result(target: PendingTarget, result: DownloadResult) -> str:
 
 async def send_result(target: PendingTarget, result: DownloadResult, mode: UploadMode, status, language: str) -> None:
     send_mode = resolve_send_mode(mode, result.filename)
-    if send_mode == "video":
-        result = await ensure_mp4_video(result, result.path.parent, media_probe.ffmpeg)
+    if send_mode == "video" and not is_video_filename(result.filename):
+        send_mode = resolve_send_mode("auto", result.filename)
+    if send_mode == "audio" and not is_audio_filename(result.filename):
+        send_mode = "document"
     caption = caption_for_result(target, result)
     probe_needed = send_mode == "video" or is_video_filename(result.filename)
     info = await media_probe.inspect(result.path) if probe_needed else None
@@ -1830,8 +1832,9 @@ async def send_result(target: PendingTarget, result: DownloadResult, mode: Uploa
     progress = ProgressEditor(
         status,
         tx(language, "label_upload"),
-        settings.progress_interval,
+        max(settings.progress_interval, 12),
         wrapper=lambda body: tx(language, "stage_uploading", progress=body),
+        percent_step=10,
     )
     force_document = send_mode == "document" and not (target.source.startswith("social") and is_image_filename(result.filename))
 

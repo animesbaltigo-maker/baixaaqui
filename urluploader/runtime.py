@@ -63,6 +63,9 @@ class RateLimiter:
         events = self._events[user_id]
         while events and events[0] <= now - self.window_seconds:
             events.popleft()
+        if not events:
+            self._events.pop(user_id, None)
+            events = self._events[user_id]
         if len(events) >= self.max_events:
             return False
         events.append(now)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import shutil
 from pathlib import Path
@@ -13,6 +14,10 @@ from .models import DownloadResult, RemoteFileInfo
 from .names import choose_filename, unique_path
 from .progress import ProgressCallback, human_size
 from .security import validate_public_url
+
+
+logger = logging.getLogger(__name__)
+FALLBACK_CHUNK_SIZE = 8 * 1024 * 1024
 
 
 class DownloadError(Exception):
@@ -84,8 +89,10 @@ class RemoteDownloader:
             try:
                 info = await self.inspect(url, preferred_filename)
                 return await self._download_with_aria2(info, target_dir, progress)
-            except Exception:
-                pass
+            except (DownloadError, FileTooLargeError):
+                raise
+            except Exception as exc:
+                logger.warning("aria2c_download_fallback url=%s reason=%s", url, exc)
 
         timeout = aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=self.request_timeout)
         session = await get_shared_http_session()
@@ -94,7 +101,7 @@ class RemoteDownloader:
                 if response.status >= 400:
                     raise DownloadError(f"HTTP {response.status} ao acessar o link.")
 
-                total = response.content_length
+                total = _declared_size_from_response(response)
                 if total and total > self.max_file_size:
                     raise FileTooLargeError(
                         "Arquivo muito grande: "
@@ -103,11 +110,12 @@ class RemoteDownloader:
 
                 filename = choose_filename(str(response.url), response.headers, preferred_filename)
                 target_path = unique_path(target_dir, filename)
+                partial_path = target_path.with_name(f"{target_path.name}.part")
                 current = 0
 
                 try:
-                    with target_path.open("wb") as file:
-                        async for chunk in response.content.iter_chunked(2 * 1024 * 1024):
+                    with partial_path.open("wb") as file:
+                        async for chunk in response.content.iter_chunked(FALLBACK_CHUNK_SIZE):
                             if not chunk:
                                 continue
                             current += len(chunk)
@@ -119,12 +127,13 @@ class RemoteDownloader:
                             file.write(chunk)
                             await progress(current, total)
                 except asyncio.CancelledError:
-                    target_path.unlink(missing_ok=True)
+                    partial_path.unlink(missing_ok=True)
                     raise
                 except Exception:
-                    target_path.unlink(missing_ok=True)
+                    partial_path.unlink(missing_ok=True)
                     raise
 
+                partial_path.replace(target_path)
                 await progress(current, total)
                 return DownloadResult(
                     path=target_path,
@@ -151,21 +160,26 @@ class RemoteDownloader:
 
         filename = info.filename
         target_path = unique_path(target_dir, filename)
+        partial_path = target_path.with_name(f"{target_path.name}.part")
         cmd = [
             self.aria2c,
             "--allow-overwrite=true",
             "--auto-file-renaming=false",
+            "--continue=true",
             "--file-allocation=none",
             "--summary-interval=1",
-            "--console-log-level=notice",
+            "--console-log-level=error",
+            "--show-console-readout=true",
             "--max-connection-per-server=8",
             "--split=8",
             "--min-split-size=1M",
+            "--max-tries=3",
+            "--retry-wait=3",
             "--user-agent=Mozilla/5.0 URLUploadBot/2.0",
             "--dir",
-            str(target_path.parent),
+            str(partial_path.parent),
             "--out",
-            target_path.name,
+            partial_path.name,
             info.url,
         ]
         process = await asyncio.create_subprocess_exec(
@@ -188,20 +202,21 @@ class RemoteDownloader:
         except asyncio.CancelledError:
             process.kill()
             await process.wait()
-            target_path.unlink(missing_ok=True)
+            partial_path.unlink(missing_ok=True)
             raise
 
-        if return_code != 0 or not target_path.exists():
-            target_path.unlink(missing_ok=True)
+        if return_code != 0 or not partial_path.exists():
+            partial_path.unlink(missing_ok=True)
             raise DownloadError("O aria2c nao conseguiu concluir o download.")
 
-        size = target_path.stat().st_size
+        size = partial_path.stat().st_size
         if size > self.max_file_size:
-            target_path.unlink(missing_ok=True)
+            partial_path.unlink(missing_ok=True)
             raise FileTooLargeError(
                 "Arquivo muito grande: "
                 f"{human_size(size)}. Limite: {human_size(self.max_file_size)}."
             )
+        partial_path.replace(target_path)
         await progress(size, total or size)
         return DownloadResult(path=target_path, filename=target_path.name, size=size, mime_type=info.mime_type)
 
@@ -225,6 +240,22 @@ def _parse_aria2_progress(line: str, current: int, total: int | None) -> tuple[i
     parsed_current = _size_to_bytes(match.group("current")) or current
     parsed_total = _size_to_bytes(match.group("total")) or total
     return parsed_current, parsed_total
+
+
+def _declared_size_from_response(response: aiohttp.ClientResponse) -> int | None:
+    size = response.content_length
+    if size:
+        return size
+    content_range = response.headers.get("Content-Range", "")
+    if content_range and "/" in content_range:
+        total_raw = content_range.rsplit("/", 1)[-1]
+        if total_raw.isdigit():
+            return int(total_raw)
+    for header in ("X-Content-Length", "X-Original-Content-Length"):
+        raw = response.headers.get(header)
+        if raw and raw.isdigit():
+            return int(raw)
+    return None
 
 
 def _size_to_bytes(value: str) -> int | None:

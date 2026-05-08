@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import mimetypes
 import shutil
-import subprocess
 import uuid
 import zipfile
 from html import escape
@@ -21,6 +20,8 @@ class ConversionError(Exception):
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 EPUB_IMAGE_EXTENSIONS = IMAGE_EXTENSIONS | {".gif"}
+MAX_ARCHIVE_ENTRIES = 2000
+MAX_ARCHIVE_UNCOMPRESSED = 2 * 1024 * 1024 * 1024
 
 
 async def convert_document(result: DownloadResult, target_format: str, work_dir: Path) -> DownloadResult:
@@ -62,8 +63,6 @@ async def ensure_mp4_video(result: DownloadResult, work_dir: Path, ffmpeg: str |
     source_info = await probe.inspect(result.path)
     codec = (source_info.codec or "").lower()
     codec_is_mobile_safe = codec in {"h264", "avc1"}
-    if result.path.suffix.lower() == ".mp4" and source_info.rotation == 0 and source_info.has_audio and codec_is_mobile_safe:
-        return result
     if not ffmpeg:
         if result.path.suffix.lower() == ".mp4":
             return result
@@ -93,11 +92,15 @@ async def ensure_mp4_video(result: DownloadResult, work_dir: Path, ffmpeg: str |
         str(target),
     ]
     copied_ok = False
-    if result.path.suffix.lower() == ".mp4" and source_info.rotation == 0 and codec_is_mobile_safe:
+    if source_info.rotation == 0 and codec_is_mobile_safe:
         copied_ok = await _run_ffmpeg(copy_cmd) and target.exists() and target.stat().st_size > 0
         if copied_ok:
             copied_info = await probe.inspect(target)
-            copied_ok = bool(copied_info.has_video and copied_info.has_audio and (copied_info.codec or "").lower() in {"h264", "avc1"})
+            copied_ok = bool(copied_info.has_video and (copied_info.codec or "").lower() in {"h264", "avc1"})
+    if copied_ok:
+        return DownloadResult(target, target.name, target.stat().st_size, "video/mp4", result.caption)
+    if not normalize:
+        return result
     if not copied_ok:
         target.unlink(missing_ok=True)
         video_filters: list[str] = []
@@ -146,18 +149,22 @@ async def ensure_mp4_video(result: DownloadResult, work_dir: Path, ffmpeg: str |
     return DownloadResult(target, target.name, target.stat().st_size, "video/mp4", result.caption)
 
 
-async def _run_ffmpeg(cmd: list[str]) -> bool:
+async def _run_ffmpeg(cmd: list[str], timeout_seconds: int = 3600) -> bool:
     try:
-        completed = await asyncio.to_thread(
-            subprocess.run,
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
         )
-    except Exception:
+        try:
+            await asyncio.wait_for(process.wait(), timeout=timeout_seconds)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+            return False
+    except (OSError, ValueError):
         return False
-    return completed.returncode == 0
+    return process.returncode == 0
 
 
 def _pil_image_module():
@@ -181,6 +188,7 @@ def _safe_stem(path: Path) -> str:
 
 
 def _image_entries_from_zip(path: Path, extensions: set[str]) -> list[tuple[str, bytes]]:
+    _validate_zip_safety(path)
     entries: list[tuple[str, bytes]] = []
     with zipfile.ZipFile(path) as archive:
         names = [
@@ -195,6 +203,37 @@ def _image_entries_from_zip(path: Path, extensions: set[str]) -> list[tuple[str,
     return entries
 
 
+def _image_names_from_zip(path: Path, extensions: set[str]) -> list[str]:
+    _validate_zip_safety(path)
+    with zipfile.ZipFile(path) as archive:
+        names = [
+            name
+            for name in archive.namelist()
+            if not name.endswith("/") and Path(name).suffix.lower() in extensions and "__MACOSX" not in name
+        ]
+    if not names:
+        raise ConversionError("NÃ£o encontrei imagens vÃ¡lidas dentro desse arquivo.")
+    return sorted(names, key=_natural_sort_key)
+
+
+def _validate_zip_safety(path: Path) -> None:
+    total = 0
+    try:
+        with zipfile.ZipFile(path) as archive:
+            infos = archive.infolist()
+            if len(infos) > MAX_ARCHIVE_ENTRIES:
+                raise ConversionError("Arquivo compactado tem itens demais para converter com seguranÃ§a.")
+            for info in infos:
+                parts = Path(info.filename).parts
+                if Path(info.filename).is_absolute() or ".." in parts:
+                    raise ConversionError("Arquivo compactado possui caminho inseguro.")
+                total += info.file_size
+                if total > MAX_ARCHIVE_UNCOMPRESSED:
+                    raise ConversionError("Arquivo compactado expande demais e foi bloqueado.")
+    except zipfile.BadZipFile as exc:
+        raise ConversionError("Arquivo compactado invÃ¡lido.") from exc
+
+
 def _natural_sort_key(value: str) -> list[object]:
     import re
 
@@ -202,17 +241,33 @@ def _natural_sort_key(value: str) -> list[object]:
 
 
 def _cbz_to_pdf(path: Path, work_dir: Path) -> Path:
+    fitz = _fitz_module()
     Image = _pil_image_module()
-    images = []
-    for _, data in _image_entries_from_zip(path, EPUB_IMAGE_EXTENSIONS):
-        image = Image.open(BytesIO(data))
-        if image.mode in {"RGBA", "LA", "P"}:
-            image = image.convert("RGB")
-        images.append(image.copy())
-
     output = unique_path(work_dir, f"{_safe_stem(path)}.pdf")
-    first, rest = images[0], images[1:]
-    first.save(output, "PDF", save_all=True, append_images=rest)
+    image_names = _image_names_from_zip(path, EPUB_IMAGE_EXTENSIONS)
+    document = fitz.open()
+    try:
+        with zipfile.ZipFile(path) as archive:
+            for name in image_names:
+                data = archive.read(name)
+                with Image.open(BytesIO(data)) as image:
+                    width, height = image.size
+                    if width <= 0 or height <= 0:
+                        continue
+                    stream = data
+                    if image.format not in {"JPEG", "PNG"}:
+                        converted = BytesIO()
+                        if image.mode in {"RGBA", "LA", "P"}:
+                            image = image.convert("RGB")
+                        image.save(converted, "JPEG", quality=90)
+                        stream = converted.getvalue()
+                page = document.new_page(width=width, height=height)
+                page.insert_image(page.rect, stream=stream)
+        if document.page_count == 0:
+            raise ConversionError("NÃ£o encontrei imagens vÃ¡lidas dentro desse arquivo.")
+        document.save(output)
+    finally:
+        document.close()
     return output
 
 

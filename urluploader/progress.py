@@ -67,6 +67,7 @@ class ProgressEditor:
         self._last_schedule = 0.0
         self._last_percent = -1
         self._loop = asyncio.get_running_loop()
+        self._pending_task: asyncio.Task[None] | None = None
 
     async def update(self, current: int, total: int | None) -> None:
         if self.message is None:
@@ -116,7 +117,9 @@ class ProgressEditor:
 
             if should_schedule:
                 self._last_schedule = now
-                self._loop.create_task(self.update(current, total))
+                if self._pending_task and not self._pending_task.done():
+                    self._pending_task.cancel()
+                self._pending_task = self._loop.create_task(self.update(current, total))
 
         return callback
 

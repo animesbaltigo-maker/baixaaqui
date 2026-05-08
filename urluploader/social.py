@@ -126,40 +126,18 @@ class SocialDownloader:
         self.aria2c = shutil.which("aria2c")
 
     async def inspect(self, url: str) -> SocialInfo:
-        cmd = [
-            sys.executable,
-            "-m",
-            "yt_dlp",
-            "--dump-single-json",
-            "--skip-download",
-            "--no-warnings",
-            "--no-playlist",
-        ]
-        cmd.extend(self._common_args(url))
-        cmd.append(url)
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=45)
-        except asyncio.TimeoutError as exc:
-            process.kill()
-            await process.wait()
-            raise DownloadTimeoutError("A plataforma demorou demais para responder.") from exc
-        if process.returncode != 0:
-            output = stderr.decode("utf-8", errors="replace").strip()
-            if "No module named yt_dlp" in output:
-                raise MissingYtDlpError("O yt-dlp nao esta instalado.")
+        data: dict[str, object] | None
+        output: str
+        data, output = await self._dump_ytdlp_json(url, use_cookies=True)
+        if data is None and _platform_from_url(url) == "instagram" and _is_auth_error(output):
+            data, output = await self._dump_ytdlp_json(url, use_cookies=False)
+        if data is None:
             if _should_try_gallery_dl(url, output):
-                return await self._inspect_with_gallery_dl(url)
+                try:
+                    return await self._inspect_with_gallery_dl(url)
+                except SocialDownloadError:
+                    pass
             raise _typed_social_error(url, output)
-
-        try:
-            data = json.loads(stdout.decode("utf-8", errors="replace"))
-        except json.JSONDecodeError as exc:
-            raise SocialDownloadError("Nao consegui ler os metadados dessa midia.") from exc
 
         entries = data.get("entries") or []
         item_count = len(entries) if isinstance(entries, list) and entries else 1
@@ -183,8 +161,48 @@ class SocialDownloader:
             provider="yt_dlp",
         )
         if _should_refine_with_gallery(url, data, info):
-            return await self._inspect_with_gallery_dl(url)
+            try:
+                return await self._inspect_with_gallery_dl(url)
+            except SocialDownloadError:
+                return info
         return info
+
+    async def _dump_ytdlp_json(self, url: str, *, use_cookies: bool = True) -> tuple[dict[str, object] | None, str]:
+        cmd = [
+            sys.executable,
+            "-m",
+            "yt_dlp",
+            "--dump-single-json",
+            "--skip-download",
+            "--no-warnings",
+            "--no-playlist",
+        ]
+        cmd.extend(self._common_args(url, use_cookies=use_cookies))
+        cmd.append(url)
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=45)
+        except asyncio.TimeoutError as exc:
+            process.kill()
+            await process.wait()
+            raise DownloadTimeoutError("A plataforma demorou demais para responder.") from exc
+        if process.returncode != 0:
+            output = stderr.decode("utf-8", errors="replace").strip()
+            if "No module named yt_dlp" in output:
+                raise MissingYtDlpError("O yt-dlp nao esta instalado.")
+            return None, output
+
+        try:
+            data = json.loads(stdout.decode("utf-8", errors="replace"))
+        except json.JSONDecodeError as exc:
+            raise SocialDownloadError("Nao consegui ler os metadados dessa midia.") from exc
+        if not isinstance(data, dict):
+            raise SocialDownloadError("Nao consegui ler os metadados dessa midia.")
+        return data, ""
 
     async def download(
         self,
@@ -201,7 +219,53 @@ class SocialDownloader:
 
         before = {path.resolve() for path in target_dir.rglob("*") if path.is_file()}
         cmd = self._build_command(url, target_dir, mode, format_selector)
+        return_code, output = await self._run_ytdlp_download(cmd, status)
 
+        if "No module named yt_dlp" in output:
+            raise MissingYtDlpError("O yt-dlp nao esta instalado.")
+        if return_code != 0:
+            if _platform_from_url(url) == "instagram":
+                recovered = await self._recover_instagram_download(
+                    url,
+                    target_dir,
+                    before,
+                    preferred_filename,
+                    mode,
+                    status,
+                )
+                if recovered:
+                    return recovered
+            if _should_try_gallery_dl(url, output):
+                try:
+                    info = await self._inspect_with_gallery_dl(url)
+                    return await self._download_gallery_media(info, target_dir, preferred_filename, mode, status)
+                except SocialDownloadError:
+                    pass
+            raise _typed_social_error(url, output) or SocialDownloadError(f"O yt-dlp encerrou com codigo {return_code}.")
+
+        files = _new_media_files(target_dir, before)
+        if not files:
+            if _platform_from_url(url) in {"instagram", "facebook", "x", "tiktok"}:
+                try:
+                    info = await self._inspect_with_gallery_dl(url)
+                    return await self._download_gallery_media(info, target_dir, preferred_filename, mode, status)
+                except SocialDownloadError:
+                    if _platform_from_url(url) == "instagram":
+                        recovered = await self._recover_instagram_download(
+                            url,
+                            target_dir,
+                            before,
+                            preferred_filename,
+                            mode,
+                            status,
+                        )
+                        if recovered:
+                            return recovered
+            raise SocialDownloadError("Nenhum arquivo de midia foi gerado.")
+
+        return await self._results_from_files(target_dir, files, preferred_filename, mode)
+
+    async def _run_ytdlp_download(self, cmd: list[str], status: StatusCallback | None) -> tuple[int, str]:
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -234,31 +298,49 @@ class SocialDownloader:
             process.kill()
             await process.wait()
             raise DownloadTimeoutError("O download demorou demais e foi interrompido com seguranca.") from exc
+        return return_code, "\n".join(tail)
 
-        output = "\n".join(tail)
-        if "No module named yt_dlp" in output:
-            raise MissingYtDlpError("O yt-dlp nao esta instalado.")
-        if return_code != 0:
-            if _should_try_gallery_dl(url, output):
-                info = await self._inspect_with_gallery_dl(url)
-                return await self._download_gallery_media(info, target_dir, preferred_filename, mode, status)
-            raise _typed_social_error(url, output) or SocialDownloadError(f"O yt-dlp encerrou com codigo {return_code}.")
+    async def _recover_instagram_download(
+        self,
+        url: str,
+        target_dir: Path,
+        before: set[Path],
+        preferred_filename: str | None,
+        mode: UploadMode,
+        status: StatusCallback | None,
+    ) -> list[DownloadResult] | None:
+        gallery_mode: UploadMode = "auto" if mode == "video" else mode
+        try:
+            info = await self._inspect_with_gallery_dl(url)
+            return await self._download_gallery_media(info, target_dir, preferred_filename, gallery_mode, status)
+        except SocialDownloadError:
+            pass
 
-        metadata_caption = self._read_caption(target_dir)
-        files = [
-            path
-            for path in target_dir.rglob("*")
-            if path.is_file()
-            and path.resolve() not in before
-            and not path.name.endswith(".part")
-            and not path.name.endswith(".info.json")
+        attempts: list[tuple[UploadMode, str | None, bool]] = [
+            ("auto" if mode == "video" else mode, None, False),
+            ("auto", "best[ext=mp4]/best", False),
+            ("auto" if mode == "video" else mode, None, True),
         ]
-        if not files:
-            if _platform_from_url(url) in {"instagram", "facebook", "x", "tiktok"}:
-                info = await self._inspect_with_gallery_dl(url)
-                return await self._download_gallery_media(info, target_dir, preferred_filename, mode, status)
-            raise SocialDownloadError("Nenhum arquivo de midia foi gerado.")
+        for attempt_mode, selector, use_cookies in attempts:
+            cmd = self._build_command(url, target_dir, attempt_mode, selector, use_cookies=use_cookies)
+            return_code, output = await self._run_ytdlp_download(cmd, status)
+            if "No module named yt_dlp" in output:
+                raise MissingYtDlpError("O yt-dlp nao esta instalado.")
+            if return_code != 0:
+                continue
+            files = _new_media_files(target_dir, before)
+            if files:
+                return await self._results_from_files(target_dir, files, preferred_filename, attempt_mode)
+        return None
 
+    async def _results_from_files(
+        self,
+        target_dir: Path,
+        files: list[Path],
+        preferred_filename: str | None,
+        mode: UploadMode,
+    ) -> list[DownloadResult]:
+        metadata_caption = self._read_caption(target_dir)
         files.sort(key=lambda path: path.stat().st_mtime)
         files = await self._coalesce_media_files(files, target_dir, mode)
         if preferred_filename and len(files) == 1:
@@ -332,7 +414,15 @@ class SocialDownloader:
             raise SocialDownloadError("A plataforma nao devolveu uma resposta valida.")
         return payload
 
-    def _build_command(self, url: str, target_dir: Path, mode: UploadMode, format_selector: str | None = None) -> list[str]:
+    def _build_command(
+        self,
+        url: str,
+        target_dir: Path,
+        mode: UploadMode,
+        format_selector: str | None = None,
+        *,
+        use_cookies: bool = True,
+    ) -> list[str]:
         template = "%(title).180B [%(id)s].%(ext)s"
         cmd = [
             sys.executable,
@@ -342,8 +432,6 @@ class SocialDownloader:
             "--no-warnings",
             "--restrict-filenames",
             "--no-playlist",
-            "--write-info-json",
-            "--no-part",
             "--concurrent-fragments",
             str(self.concurrent_fragments),
             "--retries",
@@ -355,7 +443,7 @@ class SocialDownloader:
             "--socket-timeout",
             "20",
             "--buffer-size",
-            "16K",
+            "64K",
             "--http-chunk-size",
             "10M",
             "--max-filesize",
@@ -365,7 +453,7 @@ class SocialDownloader:
             "-o",
             template,
         ]
-        cmd.extend(self._common_args(url))
+        cmd.extend(self._common_args(url, use_cookies=use_cookies))
         if self.can_postprocess and self.ffmpeg:
             cmd.extend(["--ffmpeg-location", str(Path(self.ffmpeg).parent)])
         if self.aria2c:
@@ -376,7 +464,7 @@ class SocialDownloader:
                     "--downloader",
                     "dash,m3u8:native",
                     "--downloader-args",
-                    "aria2c:-c -x8 -s8 -k1M --file-allocation=none --summary-interval=1",
+                    "aria2c:-c -x8 -s8 -k1M --min-split-size=1M --file-allocation=none --summary-interval=1 --max-tries=3 --retry-wait=3",
                 ]
             )
 
@@ -408,13 +496,14 @@ class SocialDownloader:
             args.extend(["--cookies-from-browser", self.cookies_from_browser])
         return args
 
-    def _common_args(self, url: str = "") -> list[str]:
+    def _common_args(self, url: str = "", *, use_cookies: bool = True) -> list[str]:
         args: list[str] = []
         if self.user_agent:
             args.extend(["--user-agent", self.user_agent])
         if self.extractor_args:
             args.extend(["--extractor-args", self.extractor_args])
-        args.extend(self._cookie_args(url))
+        if use_cookies:
+            args.extend(self._cookie_args(url))
         return args
 
     def _gallery_common_args(self, url: str = "") -> list[str]:
@@ -446,7 +535,6 @@ class SocialDownloader:
             "gallery_dl",
             "--no-input",
             "--quiet",
-            "--no-part",
             "--no-skip",
             "--retries",
             "4",
@@ -645,7 +733,22 @@ def _friendly_error(output: str) -> str:
 def _typed_social_error(url: str, output: str) -> BaixaAquiError:
     text = output.lower()
     platform = _platform_from_url(url)
-    if any(
+    if _is_auth_error(output):
+        if platform == "instagram":
+            return CookieRequiredError("[instagram-auth-required]")
+        if platform == "facebook":
+            return CookieRequiredError("[facebook-auth-required]")
+        if platform in {"youtube", "youtube_music"}:
+            return CookieRequiredError("[youtube-auth-required]")
+        return CookieRequiredError("[auth-required]")
+    if any(marker in text for marker in ("http error 429", "too many requests", "captcha", "not a bot", "forbidden", "http error 403")):
+        return PlatformBlockedError(_friendly_error(output))
+    return SocialDownloadError(_friendly_error(output))
+
+
+def _is_auth_error(output: str) -> bool:
+    text = output.lower()
+    return any(
         marker in text
         for marker in (
             "sign in to confirm",
@@ -657,17 +760,7 @@ def _typed_social_error(url: str, output: str) -> BaixaAquiError:
             "accounts/login",
             "private video",
         )
-    ):
-        if platform == "instagram":
-            return CookieRequiredError("[instagram-auth-required]")
-        if platform == "facebook":
-            return CookieRequiredError("[facebook-auth-required]")
-        if platform in {"youtube", "youtube_music"}:
-            return CookieRequiredError("[youtube-auth-required]")
-        return CookieRequiredError("[auth-required]")
-    if any(marker in text for marker in ("http error 429", "too many requests", "captcha", "not a bot", "forbidden", "http error 403")):
-        return PlatformBlockedError(_friendly_error(output))
-    return SocialDownloadError(_friendly_error(output))
+    )
 
 
 def _friendly_gallery_error(url: str, text: str) -> str:
@@ -1049,7 +1142,7 @@ def _select_gallery_items(info: SocialInfo, mode: UploadMode) -> list[SocialMedi
     if mode == "photo":
         return images
     if mode == "video":
-        return videos or images
+        return videos
     if images and not videos:
         return images
     if videos:

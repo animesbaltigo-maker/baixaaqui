@@ -44,22 +44,35 @@ async def upload_big_file_parallel(
 
     async def worker() -> None:
         nonlocal completed
-        while True:
-            part = await reserve_part()
-            if part is None:
-                return
+        with path.open("rb") as file:
+            while True:
+                part = await reserve_part()
+                if part is None:
+                    return
 
-            chunk = await asyncio.to_thread(_read_part, path, part, part_size)
-            await client(SaveBigFilePartRequest(file_id, part, total_parts, chunk))
-            async with progress_lock:
-                completed += len(chunk)
-                progress(completed, file_size)
+                chunk = await asyncio.to_thread(_read_part_from_handle, file, part, part_size)
+                await client(SaveBigFilePartRequest(file_id, part, total_parts, chunk))
+                async with progress_lock:
+                    completed += len(chunk)
+                    progress(completed, file_size)
 
     await asyncio.gather(*(worker() for _ in range(max(workers, 1))))
     return InputFileBig(file_id, total_parts, filename)
 
 
-def _read_part(path: Path, part: int, part_size: int) -> bytes:
-    with path.open("rb") as file:
-        file.seek(part * part_size)
-        return file.read(part_size)
+def upload_workers_for_size(size: int, configured_workers: int) -> int:
+    mb = size / 1024 / 1024
+    if mb < 100:
+        recommended = 2
+    elif mb < 700:
+        recommended = 4
+    elif mb < 1900:
+        recommended = 6
+    else:
+        recommended = 8
+    return max(1, min(configured_workers, recommended))
+
+
+def _read_part_from_handle(file, part: int, part_size: int) -> bytes:
+    file.seek(part * part_size)
+    return file.read(part_size)

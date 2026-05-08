@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import ipaddress
 import logging
 import mimetypes
@@ -14,7 +15,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from aiohttp import web
-from telethon import Button, TelegramClient, events
+from telethon import Button, TelegramClient, events, utils
 from telethon.errors import FloodWaitError
 from telethon.tl.types import DocumentAttributeVideo
 
@@ -30,6 +31,7 @@ from urluploader.content import (
 )
 from urluploader.database import PremiumStore
 from urluploader.downloader import DownloadError, FileTooLargeError, RemoteDownloader
+from urluploader.drive import DriveDownloadError, GoogleDriveDownloader, is_drive_url
 from urluploader.diagnostics import render_diagnostics, run_diagnostics
 from urluploader.errors import BaixaAquiError, CookieRequiredError, DownloadTimeoutError, PlatformBlockedError, UploadFailedError
 from urluploader.html_text import h, preserve
@@ -48,7 +50,7 @@ from urluploader.names import (
     sanitize_filename,
     unique_path,
 )
-from urluploader.parallel_upload import should_parallel_upload, upload_big_file_parallel
+from urluploader.parallel_upload import should_parallel_upload, upload_big_file_parallel, upload_workers_for_size
 from urluploader.premium_i18n import normalize_language, tx
 from urluploader.progress import ProgressEditor, human_size, render_progress
 from urluploader.runtime import RateLimiter, SessionManager
@@ -61,7 +63,7 @@ settings = load_settings()
 setup_logging(settings.log_dir, settings.log_level, settings.log_format)
 logger = logging.getLogger("urlupload.bot")
 client = TelegramClient(str(settings.data_dir / "urlupload_bot"), settings.api_id, settings.api_hash)
-bot_api = BotApiClient(settings.bot_token, settings.bot_api_base_url, settings.request_timeout)
+bot_api = BotApiClient(settings.bot_token, settings.bot_api_base_url, settings.bot_api_timeout_seconds)
 store = PremiumStore(settings.data_dir / "premium.sqlite3")
 sessions = SessionManager(settings.session_ttl_seconds)
 rate_limiter = RateLimiter(settings.rate_limit_window_seconds, settings.rate_limit_max_events)
@@ -69,6 +71,7 @@ link_storage = LocalLinkStorage(settings.public_files_dir, settings.public_base_
 image_host = TelegraphImageHost()
 media_probe = MediaProbe()
 remote_downloader = RemoteDownloader(settings.max_file_size, settings.request_timeout, allow_private_downloads=settings.allow_private_downloads)
+drive_downloader = GoogleDriveDownloader(settings.max_file_size, settings.request_timeout)
 social_downloader = SocialDownloader(
     settings.max_file_size,
     settings.ytdlp_format,
@@ -1069,7 +1072,7 @@ async def route_message(event) -> None:
         if contains_url(text):
             url = extract_url(text) or text.strip()
             url = normalize_shared_url(url)
-            if is_social_url(url):
+            if is_social_url(url) or is_drive_url(url):
                 await analyze_link(event, url, language)
         return
 
@@ -1213,6 +1216,31 @@ async def analyze_link(event, url: str, language: str) -> None:
             await schedule_job(event, target, mode="auto", status=None, silent=True, ephemeral=True)
             return
 
+        if is_drive_url(url):
+            if not settings.google_drive_enabled:
+                raise DriveDownloadError(tx(language, "drive_disabled"))
+            if not settings.google_drive_public_only:
+                raise DriveDownloadError(tx(language, "drive_public_only"))
+            status = None if not is_private_chat(event) else await answer(event, "analyzing_link", language)
+            info = await inspect_drive(url)
+            target = remember(
+                PendingTarget(
+                    token=token(),
+                    user_id=actor_id(event),
+                    chat_id=int(event.chat_id),
+                    source="direct:drive",
+                    url=url,
+                    filename=info.filename,
+                    direct_info=info,
+                    created_at=time.time(),
+                )
+            )
+            if is_private_chat(event):
+                await edit_html(status, direct_card(language, info), buttons=direct_buttons(language, target, profile_for_direct(info)))
+            else:
+                await schedule_job(event, target, mode="auto", status=None, silent=True, ephemeral=True)
+            return
+
         status = await answer(event, "analyzing_link", language)
         info = await inspect_direct(url)
         target = remember(
@@ -1249,8 +1277,19 @@ async def inspect_direct(url: str) -> RemoteFileInfo:
     return info
 
 
+async def inspect_drive(url: str) -> RemoteFileInfo:
+    cache_key = f"drive:{url}"
+    cached = store.cache_get(cache_key)
+    if cached:
+        return RemoteFileInfo.from_dict(cached)
+    async with inspect_slots:
+        info = await drive_downloader.inspect(url)
+    store.cache_set(cache_key, info.to_dict(), settings.metadata_cache_ttl_seconds)
+    return info
+
+
 async def inspect_social(url: str) -> SocialInfo:
-    cache_key = f"social:{url}"
+    cache_key = f"social:v7:{url}"
     cached = store.cache_get(cache_key)
     if cached:
         return SocialInfo.from_dict(cached)
@@ -1418,7 +1457,7 @@ async def try_fast_image_link(target: PendingTarget, status, language: str, job_
     progress = ProgressEditor(
         status,
         tx(language, "label_download"),
-        settings.progress_interval,
+        min(max(settings.progress_interval, 1), 3),
         wrapper=lambda body: tx(language, "stage_downloading", progress=body),
     )
     raw = await message.download_media(file=bytes, progress_callback=progress.as_callback())
@@ -1505,6 +1544,8 @@ async def run_media_job(job_id: str, target: PendingTarget, mode: UploadMode, st
         store.update_job(job_id, "running")
         async with job_slots:
             await edit_status(status, tx(language, "stage_preparing"), buttons=cancel_button(language, job_id))
+            if await try_cached_file_send(job_id, target, mode, status, language, ephemeral):
+                return
             if await try_fast_remote_send(target, mode):
                 store.update_job(job_id, "done")
                 logger.info("job_done_fast job_id=%s kind=%s user_id=%s total_ms=%d", job_id, target.source, target.user_id, int((time.perf_counter() - started_at) * 1000))
@@ -1514,9 +1555,14 @@ async def run_media_job(job_id: str, target: PendingTarget, mode: UploadMode, st
                     await edit_status(status, tx(language, "done"))
                 pending_targets.pop(target.token, None)
                 return
+            await edit_status(
+                status,
+                tx(language, "stage_downloading", progress=render_progress(tx(language, "label_download"), 0, None, time.monotonic())),
+                buttons=cancel_button(language, job_id),
+            )
             async with download_slots:
                 download_started = time.perf_counter()
-                results = await materialize(target, mode, job_dir, status, language)
+                results = await materialize(target, mode, job_dir, status, language, buttons=cancel_button(language, job_id))
                 download_ms = (time.perf_counter() - download_started) * 1000
                 total_in = sum(result.size for result in results)
                 if ephemeral and total_in > settings.group_max_file_size:
@@ -1527,10 +1573,15 @@ async def run_media_job(job_id: str, target: PendingTarget, mode: UploadMode, st
                 if target.conversion:
                     await edit_status(status, tx(language, "stage_converting"), buttons=cancel_button(language, job_id))
                     results = [await convert_document(result, target.conversion, job_dir) for result in results]
+            await edit_status(
+                status,
+                tx(language, "stage_uploading", progress=render_progress(tx(language, "label_upload"), 0, sum(result.size for result in results), time.monotonic())),
+                buttons=cancel_button(language, job_id),
+            )
             async with upload_slots:
                 upload_started = time.perf_counter()
                 for result in results:
-                    await send_result(target, result, mode, status, language)
+                    await send_result(target, result, mode, status, language, buttons=cancel_button(language, job_id))
                 upload_ms = (time.perf_counter() - upload_started) * 1000
         store.update_job(job_id, "done", bytes_out=sum(result.size for result in results))
         logger.info(
@@ -1552,7 +1603,7 @@ async def run_media_job(job_id: str, target: PendingTarget, mode: UploadMode, st
         logger.warning("job_cancelled job_id=%s kind=%s user_id=%s", job_id, target.source, target.user_id)
         await edit_status(status, tx(language, "cancelled"))
         raise
-    except (BaixaAquiError, DownloadError, FileTooLargeError, MissingYtDlpError, SocialDownloadError, ConversionError) as exc:
+    except (BaixaAquiError, DownloadError, FileTooLargeError, MissingYtDlpError, SocialDownloadError, ConversionError, DriveDownloadError) as exc:
         store.update_job(job_id, "failed", error=str(exc))
         store.record_error(user_id=target.user_id, chat_id=target.chat_id, job_id=job_id, platform=target.source, stage="media", message=str(exc))
         logger.warning("job_failed job_id=%s kind=%s user_id=%s reason=%s", job_id, target.source, target.user_id, exc)
@@ -1570,6 +1621,47 @@ async def run_media_job(job_id: str, target: PendingTarget, mode: UploadMode, st
             await edit_status(status, tx(language, "error_human", reason=tx(language, "unexpected_media_error")))
     finally:
         shutil.rmtree(job_dir, ignore_errors=True)
+
+
+async def try_cached_file_send(job_id: str, target: PendingTarget, mode: UploadMode, status, language: str, ephemeral: bool) -> bool:
+    if not settings.file_id_cache_enabled or not target.url or target.conversion or target.format_selector:
+        return False
+    cache_key = file_id_cache_key(target, mode)
+    cached = store.file_id_get(cache_key)
+    if not cached:
+        return False
+    try:
+        await client.send_file(
+            target.chat_id,
+            cached["file_id"],
+            caption=caption_for_cached(target),
+            parse_mode="html",
+        )
+        store.update_job(job_id, "done")
+        logger.info("job_file_id_cache_hit job_id=%s kind=%s user_id=%s mode=%s", job_id, target.source, target.user_id, cached["mode"])
+        if ephemeral:
+            await delete_status(status)
+        else:
+            await edit_status(status, tx(language, "done"))
+        pending_targets.pop(target.token, None)
+        return True
+    except Exception as exc:
+        store.file_id_delete(cache_key)
+        logger.warning("job_file_id_cache_invalid job_id=%s reason=%s", job_id, exc)
+        return False
+
+
+def file_id_cache_key(target: PendingTarget, mode: UploadMode) -> str:
+    raw = f"{target.url or ''}|{mode}|{target.format_selector or ''}|{target.conversion or ''}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def caption_for_cached(target: PendingTarget) -> str:
+    raw = target.caption or (target.social_info.description if target.social_info else None) or target.filename or BRANDING
+    caption = preserve(raw, 900)
+    if target.source.startswith("social"):
+        caption = f"{caption.rstrip()}\n\n{BRANDING}" if caption.strip() else BRANDING
+    return h(caption)
 
 
 async def run_link_job(job_id: str, target: PendingTarget, status, language: str) -> None:
@@ -1699,24 +1791,38 @@ async def run_link_job(job_id: str, target: PendingTarget, status, language: str
         shutil.rmtree(job_dir, ignore_errors=True)
 
 
-async def materialize(target: PendingTarget, mode: UploadMode, job_dir: Path, status, language: str) -> list[DownloadResult]:
-    started = time.monotonic()
+async def materialize(target: PendingTarget, mode: UploadMode, job_dir: Path, status, language: str, *, buttons=None) -> list[DownloadResult]:
+    progress_editor = ProgressEditor(
+        status,
+        tx(language, "label_download"),
+        min(max(settings.progress_interval, 1), 2),
+        wrapper=lambda body: tx(language, "stage_downloading", progress=body),
+        buttons=buttons,
+        percent_step=2,
+    )
 
     async def update(current: int, total: int | None) -> None:
-        if status:
-            await edit_html(status, tx(language, "stage_downloading", progress=render_progress(tx(language, "label_download"), current, total, started)))
+        await progress_editor.update(current, total)
 
     if target.source.startswith("direct"):
         key = f"direct:{target.url}:{target.filename or ''}"
         lock = download_dedupe.setdefault(key, asyncio.Lock())
         try:
             async with lock:
-                result = await remote_downloader.download(
-                    target.url or "",
-                    job_dir,
-                    target.filename,
-                    update,
-                )
+                if target.source.startswith("direct:drive"):
+                    result = await drive_downloader.download(
+                        target.url or "",
+                        job_dir,
+                        target.filename,
+                        update,
+                    )
+                else:
+                    result = await remote_downloader.download(
+                        target.url or "",
+                        job_dir,
+                        target.filename,
+                        update,
+                    )
         finally:
             download_dedupe.pop(key, None)
         return [result]
@@ -1735,7 +1841,7 @@ async def materialize(target: PendingTarget, mode: UploadMode, job_dir: Path, st
                 return
             last = now
             last_text = text
-            await edit_html(status, tx(language, "stage_downloading", progress=h(text)))
+            await edit_html(status, tx(language, "stage_downloading", progress=h(text)), buttons=buttons)
 
         key = f"social:{target.url}:{mode}:{target.format_selector or ''}"
         lock = download_dedupe.setdefault(key, asyncio.Lock())
@@ -1772,22 +1878,23 @@ async def materialize(target: PendingTarget, mode: UploadMode, job_dir: Path, st
         if target.caption:
             results = [replace_result_caption(item, target.caption) for item in results]
         return results
-    return [await download_telegram_file(target, job_dir, status, language)]
+    return [await download_telegram_file(target, job_dir, status, language, buttons=buttons)]
 
 
 def replace_result_caption(result: DownloadResult, caption: str) -> DownloadResult:
     return DownloadResult(result.path, result.filename, result.size, result.mime_type, caption)
 
 
-async def download_telegram_file(target: PendingTarget, job_dir: Path, status, language: str) -> DownloadResult:
+async def download_telegram_file(target: PendingTarget, job_dir: Path, status, language: str, *, buttons=None) -> DownloadResult:
     message = await client.get_messages(target.chat_id, ids=target.message_id)
     if not message:
         raise DownloadError(tx(language, "original_file_missing"))
     progress = ProgressEditor(
         status,
         tx(language, "label_download"),
-        settings.progress_interval,
+        min(max(settings.progress_interval, 1), 3),
         wrapper=lambda body: tx(language, "stage_downloading", progress=body),
+        buttons=buttons,
     )
     downloaded = await message.download_media(file=str(job_dir), progress_callback=progress.as_callback())
     if not downloaded:
@@ -1810,7 +1917,7 @@ def caption_for_result(target: PendingTarget, result: DownloadResult) -> str:
     return h(caption)
 
 
-async def send_result(target: PendingTarget, result: DownloadResult, mode: UploadMode, status, language: str) -> None:
+async def send_result(target: PendingTarget, result: DownloadResult, mode: UploadMode, status, language: str, *, buttons=None) -> None:
     send_mode = resolve_send_mode(mode, result.filename)
     if send_mode == "video" and not is_video_filename(result.filename):
         send_mode = resolve_send_mode("auto", result.filename)
@@ -1821,6 +1928,31 @@ async def send_result(target: PendingTarget, result: DownloadResult, mode: Uploa
     info = await media_probe.inspect(result.path) if probe_needed else None
     if send_mode == "video" and target.source.startswith("social") and info and not info.has_audio:
         raise SocialDownloadError(tx(language, "youtube_audio_missing"))
+    if (
+        send_mode == "video"
+        and target.source.startswith("social")
+        and info
+        and info.duration
+        and info.duration > 2
+        and info.frame_count is not None
+        and info.frame_count <= 3
+    ):
+        if is_instagram_target(target):
+            static_photo = await media_probe.thumbnail(result.path, result.path.with_suffix(".jpg"))
+            if static_photo and static_photo.exists():
+                result = DownloadResult(
+                    path=static_photo,
+                    filename=static_photo.name,
+                    size=static_photo.stat().st_size,
+                    mime_type="image/jpeg",
+                    caption=result.caption,
+                )
+                send_mode = "photo"
+                info = None
+            else:
+                send_mode = "document"
+        else:
+            send_mode = "document"
     thumb = Path(target.thumb_path) if target.thumb_path else get_default_thumb(target.user_id)
     thumb = await normalize_thumb_path(thumb) if thumb else None
     generated_thumb = None
@@ -1828,14 +1960,17 @@ async def send_result(target: PendingTarget, result: DownloadResult, mode: Uploa
         generated_thumb = await media_probe.thumbnail(result.path, result.path.with_suffix(".jpg"))
         thumb = generated_thumb
 
-    await edit_status(status, tx(language, "stage_uploading", progress=render_progress(tx(language, "label_upload"), 0, result.size, time.monotonic())))
+    await edit_status(status, tx(language, "stage_uploading", progress=render_progress(tx(language, "label_upload"), 0, result.size, time.monotonic())), buttons=buttons)
+    is_social_upload = target.source.startswith("social")
     progress = ProgressEditor(
         status,
         tx(language, "label_upload"),
-        max(settings.progress_interval, 12),
+        min(max(settings.progress_interval, 1), 2 if is_social_upload else 4),
         wrapper=lambda body: tx(language, "stage_uploading", progress=body),
-        percent_step=10,
+        buttons=buttons,
+        percent_step=2 if is_social_upload else 5,
     )
+    upload_progress_callback = progress.as_callback() if status else None
     force_document = send_mode == "document" and not (target.source.startswith("social") and is_image_filename(result.filename))
 
     async def upload_with_telethon(file_arg):
@@ -1854,7 +1989,7 @@ async def send_result(target: PendingTarget, result: DownloadResult, mode: Uploa
             if delay:
                 await asyncio.sleep(delay)
             try:
-                await client.send_file(
+                sent = await client.send_file(
                     target.chat_id,
                     file_arg,
                     caption=caption,
@@ -1863,8 +1998,9 @@ async def send_result(target: PendingTarget, result: DownloadResult, mode: Uploa
                     thumb=str(thumb) if send_mode in {"video", "document"} and thumb and thumb.exists() else None,
                     supports_streaming=send_mode == "video",
                     attributes=attrs or None,
-                    progress_callback=progress.as_callback(),
+                    progress_callback=upload_progress_callback,
                 )
+                remember_file_id(target, mode, send_mode, sent)
                 return
             except FloodWaitError as exc:
                 last_error = exc
@@ -1877,12 +2013,12 @@ async def send_result(target: PendingTarget, result: DownloadResult, mode: Uploa
     async def upload_with_bot_api() -> bool:
         if settings.send_backend == "telethon":
             return False
-        if settings.send_backend == "auto" and not bot_api.is_local:
+        if target.source.startswith("social") and not bot_api.is_local:
             return False
         if not bot_api.supports_local_size(result.path):
             return False
         try:
-            await bot_api.send_local_file(
+            response = await bot_api.send_local_file(
                 target.chat_id,
                 result.path,
                 filename=result.filename,
@@ -1890,6 +2026,7 @@ async def send_result(target: PendingTarget, result: DownloadResult, mode: Uploa
                 mode=send_mode,
                 thumbnail=thumb if send_mode in {"video", "document"} and thumb and thumb.exists() else None,
             )
+            remember_bot_api_file_id(target, mode, send_mode, response)
             return True
         except Exception as exc:
             logger.warning("bot_api_upload_fallback chat_id=%s file=%s reason=%s", target.chat_id, result.filename, exc)
@@ -1901,22 +2038,80 @@ async def send_result(target: PendingTarget, result: DownloadResult, mode: Uploa
 
         if send_mode != "photo" and should_parallel_upload(result.path, settings.parallel_upload_enabled, settings.parallel_upload_threshold):
             try:
+                workers = upload_workers_for_size(result.size, settings.parallel_upload_workers)
                 uploaded = await upload_big_file_parallel(
                     client,
                     result.path,
                     result.filename,
-                    settings.parallel_upload_workers,
-                    progress.as_callback(),
+                    workers,
+                    upload_progress_callback or (lambda _current, _total: None),
                 )
                 await upload_with_telethon(uploaded)
                 return
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "parallel_upload_failed_fallback_to_telethon chat_id=%s file=%s size=%s workers=%s reason=%s",
+                    target.chat_id,
+                    result.filename,
+                    result.size,
+                    workers,
+                    exc,
+                )
 
         await upload_with_telethon(str(result.path))
     finally:
         if generated_thumb:
             generated_thumb.unlink(missing_ok=True)
+
+
+def remember_file_id(target: PendingTarget, requested_mode: UploadMode, send_mode: UploadMode, sent) -> None:
+    if not settings.file_id_cache_enabled or not target.url or target.conversion or target.format_selector:
+        return
+    media = getattr(sent, "media", None)
+    document = getattr(media, "document", None)
+    photo = getattr(media, "photo", None)
+    try:
+        file_id = utils.pack_bot_file_id(document or photo)
+    except Exception:
+        file_id = None
+    if not file_id:
+        return
+    try:
+        store.file_id_set(file_id_cache_key(target, requested_mode), file_id, send_mode)
+    except Exception:
+        logger.exception("file_id_cache_store_failed url=%s", target.url)
+
+
+def remember_bot_api_file_id(target: PendingTarget, requested_mode: UploadMode, send_mode: UploadMode, response: dict) -> None:
+    if not settings.file_id_cache_enabled or not target.url or target.conversion or target.format_selector:
+        return
+    file_id = extract_bot_api_file_id(response)
+    if not file_id:
+        return
+    try:
+        store.file_id_set(file_id_cache_key(target, requested_mode), file_id, send_mode)
+    except Exception:
+        logger.exception("file_id_cache_store_failed url=%s", target.url)
+
+
+def extract_bot_api_file_id(response: dict) -> str | None:
+    result = response.get("result")
+    if not isinstance(result, dict):
+        return None
+    for key in ("video", "audio", "document", "photo"):
+        value = result.get(key)
+        if isinstance(value, dict) and isinstance(value.get("file_id"), str):
+            return value["file_id"]
+        if isinstance(value, list) and value:
+            item = value[-1]
+            if isinstance(item, dict) and isinstance(item.get("file_id"), str):
+                return item["file_id"]
+    return None
+
+
+def is_instagram_target(target: PendingTarget) -> bool:
+    hostname = (urlparse(target.url or "").hostname or "").lower()
+    return "instagram" in hostname
 
 
 def resolve_send_mode(mode: UploadMode, filename: str) -> UploadMode:
@@ -1992,6 +2187,8 @@ async def cleanup_loop() -> None:
                 if internal_path:
                     link_storage.delete(Path(internal_path))
             store.cleanup_cache()
+            if settings.file_id_cache_enabled:
+                store.file_id_cleanup(settings.file_id_cache_max_age_days)
         except Exception:
             logger.exception("cleanup_failed")
         await asyncio.sleep(900)

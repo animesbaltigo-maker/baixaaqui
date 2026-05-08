@@ -8,9 +8,13 @@ SUPPORTED_LANGUAGES = {"pt", "en", "es"}
 TEXTS: dict[str, dict[str, str]] = {
     "pt": {
         "welcome": (
-            "<b>Olá, {name}.</b>\n"
-            "<i>Seu hub premium para baixar, enviar, organizar e compartilhar mídias.</i>\n\n"
-            "Envie um link ou arquivo. Eu cuido do resto com rapidez e capricho."
+            "📥 <b>Olá, {name}. Bem-vindo ao Baixa Aqui!</b>\n\n"
+            "Envie links ou arquivos e eu preparo tudo para baixar, enviar, organizar ou compartilhar.\n\n"
+            "<blockquote>• 🔗 Baixe por link direto\n"
+            "• 🎞️ Envie mídias de redes sociais quando disponível\n"
+            "• 🧰 Renomeie, ajuste legenda, capa e conversões\n"
+            "• 📁 Gere links e acompanhe suas tarefas</blockquote>\n\n"
+            "<i>Envie um link ou escolha uma opção no menu.</i>"
         ),
         "help": (
             "<b>Ajuda rápida</b>\n\n"

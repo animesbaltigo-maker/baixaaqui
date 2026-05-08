@@ -108,6 +108,9 @@ class SocialDownloader:
         platform_cookies: dict[str, str] | None = None,
         cookies_max_age_hours: int = 72,
         concurrent_fragments: int = 4,
+        aria2_connections: int = 8,
+        aria2_split: int = 8,
+        aria2_min_split_size: str = "1M",
         gallery_config: str = "",
     ) -> None:
         self.max_file_size = max_file_size
@@ -119,6 +122,9 @@ class SocialDownloader:
         self.platform_cookies = platform_cookies or {}
         self.cookies_max_age_hours = cookies_max_age_hours
         self.concurrent_fragments = max(1, concurrent_fragments)
+        self.aria2_connections = max(1, aria2_connections)
+        self.aria2_split = max(1, aria2_split)
+        self.aria2_min_split_size = aria2_min_split_size
         self.gallery_config = gallery_config.strip()
         self.ffmpeg = _find_ffmpeg()
         self.ffprobe = _find_ffprobe(self.ffmpeg)
@@ -464,7 +470,11 @@ class SocialDownloader:
                     "--downloader",
                     "dash,m3u8:native",
                     "--downloader-args",
-                    "aria2c:-c -x8 -s8 -k1M --min-split-size=1M --file-allocation=none --summary-interval=1 --max-tries=3 --retry-wait=3",
+                    (
+                        f"aria2c:-c -x{self.aria2_connections} -s{self.aria2_split} "
+                        f"-k1M --min-split-size={self.aria2_min_split_size} "
+                        "--file-allocation=none --summary-interval=1 --max-tries=3 --retry-wait=3"
+                    ),
                 ]
             )
 

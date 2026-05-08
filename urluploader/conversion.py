@@ -24,7 +24,7 @@ MAX_ARCHIVE_ENTRIES = 2000
 MAX_ARCHIVE_UNCOMPRESSED = 2 * 1024 * 1024 * 1024
 
 
-async def convert_document(result: DownloadResult, target_format: str, work_dir: Path) -> DownloadResult:
+async def convert_document(result: DownloadResult, target_format: str, work_dir: Path, *, turbo: bool = False) -> DownloadResult:
     target_format = target_format.lower().lstrip(".")
     source_suffix = result.path.suffix.lower().lstrip(".")
     if target_format not in {"pdf", "cbz", "epub"}:
@@ -37,9 +37,9 @@ async def convert_document(result: DownloadResult, target_format: str, work_dir:
     elif source_suffix == "cbz" and target_format == "epub":
         path = await asyncio.to_thread(_cbz_to_epub, result.path, work_dir)
     elif source_suffix == "pdf" and target_format == "cbz":
-        path = await asyncio.to_thread(_pdf_to_cbz, result.path, work_dir)
+        path = await asyncio.to_thread(_pdf_to_cbz, result.path, work_dir, 1.5 if turbo else 2.0)
     elif source_suffix == "pdf" and target_format == "epub":
-        cbz = await asyncio.to_thread(_pdf_to_cbz, result.path, work_dir)
+        cbz = await asyncio.to_thread(_pdf_to_cbz, result.path, work_dir, 1.5 if turbo else 2.0)
         path = await asyncio.to_thread(_cbz_to_epub, cbz, work_dir)
     elif source_suffix == "epub" and target_format == "cbz":
         path = await asyncio.to_thread(_epub_to_cbz, result.path, work_dir)
@@ -58,7 +58,14 @@ async def convert_document(result: DownloadResult, target_format: str, work_dir:
     )
 
 
-async def ensure_mp4_video(result: DownloadResult, work_dir: Path, ffmpeg: str | None, *, normalize: bool = True) -> DownloadResult:
+async def ensure_mp4_video(
+    result: DownloadResult,
+    work_dir: Path,
+    ffmpeg: str | None,
+    *,
+    normalize: bool = True,
+    turbo: bool = False,
+) -> DownloadResult:
     probe = MediaProbe()
     source_info = await probe.inspect(result.path)
     codec = (source_info.codec or "").lower()
@@ -77,6 +84,8 @@ async def ensure_mp4_video(result: DownloadResult, work_dir: Path, ffmpeg: str |
         "-hide_banner",
         "-loglevel",
         "error",
+        "-threads",
+        "0",
         "-i",
         str(result.path),
         "-map",
@@ -117,6 +126,8 @@ async def ensure_mp4_video(result: DownloadResult, work_dir: Path, ffmpeg: str |
             "-hide_banner",
             "-loglevel",
             "error",
+            "-threads",
+            "0",
             "-i",
             str(result.path),
             "-map",
@@ -130,9 +141,9 @@ async def ensure_mp4_video(result: DownloadResult, work_dir: Path, ffmpeg: str |
             "-pix_fmt",
             "yuv420p",
             "-preset",
-            "veryfast",
+            "ultrafast" if turbo else "veryfast",
             "-crf",
-            "23",
+            "24" if turbo else "23",
             "-c:a",
             "aac",
             "-map_metadata",
@@ -329,14 +340,14 @@ def _cbz_to_epub(path: Path, work_dir: Path) -> Path:
     return output
 
 
-def _pdf_to_cbz(path: Path, work_dir: Path) -> Path:
+def _pdf_to_cbz(path: Path, work_dir: Path, scale: float = 2.0) -> Path:
     fitz = _fitz_module()
     output = unique_path(work_dir, f"{_safe_stem(path)}.cbz")
     document = fitz.open(path)
     try:
         with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as cbz:
             for index, page in enumerate(document, start=1):
-                pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+                pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
                 cbz.writestr(f"page-{index:04d}.jpg", pixmap.tobytes("jpeg", jpg_quality=90))
     finally:
         document.close()

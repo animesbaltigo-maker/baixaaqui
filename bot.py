@@ -89,6 +89,9 @@ social_downloader = SocialDownloader(
     platform_cookies=settings.ytdlp_platform_cookies,
     cookies_max_age_hours=settings.ytdlp_cookies_max_age_hours,
     concurrent_fragments=settings.ytdlp_concurrent_fragments,
+    aria2_connections=settings.turbo_aria2_connections if settings.turbo_mode else 8,
+    aria2_split=settings.turbo_aria2_split if settings.turbo_mode else 8,
+    aria2_min_split_size=settings.turbo_aria2_min_split_size if settings.turbo_mode else "1M",
     gallery_config=settings.gallery_dl_config,
 )
 
@@ -1541,8 +1544,21 @@ async def run_media_job(job_id: str, target: PendingTarget, mode: UploadMode, st
                     )
                 store.update_job(job_id, "running", bytes_in=total_in)
                 if target.conversion:
+                    convert_started = time.perf_counter()
                     await edit_status(status, tx(language, "stage_converting"), buttons=cancel_button(language, job_id))
-                    results = [await convert_document(result, target.conversion, job_dir) for result in results]
+                    results = [await convert_document(result, target.conversion, job_dir, turbo=settings.turbo_mode) for result in results]
+                    converted_size = sum(result.size for result in results)
+                    convert_elapsed = time.perf_counter() - convert_started
+                    logger.info(
+                        "convert_done job_id=%s target=%s files=%d size=%s elapsed_ms=%d mbps=%.2f turbo=%s",
+                        job_id,
+                        target.conversion,
+                        len(results),
+                        converted_size,
+                        int(convert_elapsed * 1000),
+                        (converted_size / 1024 / 1024) / convert_elapsed if convert_elapsed > 0 else 0.0,
+                        settings.turbo_mode,
+                    )
             await edit_status(
                 status,
                 tx(language, "stage_uploading", progress=render_progress(tx(language, "label_upload"), 0, sum(result.size for result in results), time.monotonic())),
@@ -1866,6 +1882,7 @@ async def download_telegram_file(target: PendingTarget, job_dir: Path, status, l
         wrapper=lambda body: tx(language, "stage_downloading", progress=body),
         buttons=buttons,
     )
+    started = time.perf_counter()
     downloaded = await message.download_media(file=str(job_dir), progress_callback=progress.as_callback())
     if not downloaded:
         raise DownloadError(tx(language, "telegram_file_download_failed"))
@@ -1875,7 +1892,18 @@ async def download_telegram_file(target: PendingTarget, job_dir: Path, status, l
         new_path = unique_path(job_dir, filename)
         path.replace(new_path)
         path = new_path
-    return DownloadResult(path, path.name, path.stat().st_size, getattr(getattr(message, "file", None), "mime_type", None), target.caption)
+    size = path.stat().st_size
+    elapsed = time.perf_counter() - started
+    logger.info(
+        "telegram_download_done chat_id=%s file=%s size=%s elapsed_ms=%d mbps=%.2f turbo=%s",
+        target.chat_id,
+        path.name,
+        size,
+        int(elapsed * 1000),
+        (size / 1024 / 1024) / elapsed if elapsed > 0 else 0.0,
+        settings.turbo_mode,
+    )
+    return DownloadResult(path, path.name, size, getattr(getattr(message, "file", None), "mime_type", None), target.caption)
 
 
 def caption_for_result(target: PendingTarget, result: DownloadResult) -> str:

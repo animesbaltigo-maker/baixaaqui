@@ -21,6 +21,7 @@ class Settings:
     progress_interval: float
     send_backend: str
     bot_api_base_url: str
+    bot_api_timeout_seconds: int
     fast_url_upload: bool
     max_concurrent_jobs: int
     max_concurrent_inspections: int
@@ -40,6 +41,10 @@ class Settings:
     parallel_upload_enabled: bool
     parallel_upload_threshold: int
     parallel_upload_workers: int
+    file_id_cache_enabled: bool
+    file_id_cache_max_age_days: int
+    google_drive_enabled: bool
+    google_drive_public_only: bool
     admin_ids: set[int]
     public_base_url: str
     public_files_dir: Path
@@ -156,6 +161,7 @@ def load_settings() -> Settings:
         progress_interval=progress_interval,
         send_backend=send_backend,
         bot_api_base_url=os.getenv("BOT_API_BASE_URL", "https://api.telegram.org").strip().rstrip("/"),
+        bot_api_timeout_seconds=_int_from_env("BOT_API_TIMEOUT_SECONDS", 900),
         fast_url_upload=_bool_from_env("FAST_URL_UPLOAD", True),
         max_concurrent_jobs=_int_from_env("MAX_CONCURRENT_JOBS", 40),
         max_concurrent_inspections=_int_from_env("MAX_CONCURRENT_INSPECTIONS", 60),
@@ -189,6 +195,10 @@ def load_settings() -> Settings:
         parallel_upload_enabled=_bool_from_env("PARALLEL_UPLOAD_ENABLED", True),
         parallel_upload_threshold=_int_from_env("PARALLEL_UPLOAD_THRESHOLD_MB", 10) * 1024 * 1024,
         parallel_upload_workers=_int_from_env("PARALLEL_UPLOAD_WORKERS", 8),
+        file_id_cache_enabled=_bool_from_env("FILE_ID_CACHE_ENABLED", True),
+        file_id_cache_max_age_days=_int_from_env("FILE_ID_CACHE_MAX_AGE_DAYS", 30),
+        google_drive_enabled=_bool_from_env("GOOGLE_DRIVE_ENABLED", True),
+        google_drive_public_only=_bool_from_env("GOOGLE_DRIVE_PUBLIC_ONLY", True),
         admin_ids=_ids_from_env("ADMIN_IDS"),
         public_base_url=os.getenv("PUBLIC_BASE_URL", "http://localhost:8080/files").strip().rstrip("/"),
         public_files_dir=public_files_dir,

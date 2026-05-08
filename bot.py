@@ -13,9 +13,10 @@ import time
 import uuid
 from collections import OrderedDict
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote_plus, urlparse
+from zoneinfo import ZoneInfo
 
 from aiohttp import web
 from telethon import Button, TelegramClient, events, utils
@@ -827,14 +828,19 @@ BROADCAST_SESSIONS: dict[int, dict[str, object]] = {}
 BROADCAST_ALERTS: dict[str, str] = {}
 BROADCAST_RUNNING = False
 BROADCAST_CONTROL: dict[str, object] = {"paused": False, "cancelled": False}
-BROADCAST_WORKERS = 4
-BROADCAST_DELAY = 0.05
+BROADCAST_WORKERS = 3
+BROADCAST_DELAY = 0.12
 BROADCAST_STATUS_EVERY = 50
 BROADCAST_STATUS_INTERVAL = 2.0
 BROADCAST_PIN_WARN_USERS = 20
 BROADCAST_PIN_LIMIT = 100
 BROADCAST_TEMPLATE_LIMIT = 12
 BROADCAST_TEMPLATES_PATH = settings.data_dir / "broadcast_templates.json"
+
+try:
+    BRASILIA_TZ = ZoneInfo("America/Sao_Paulo")
+except Exception:
+    BRASILIA_TZ = timezone(timedelta(hours=-3), "America/Sao_Paulo")
 
 
 def broadcast_blank() -> dict[str, object]:
@@ -863,15 +869,15 @@ def broadcast_data(user_id: int) -> dict[str, object]:
 
 
 def broadcast_yes_no(value: bool) -> str:
-    return "Sim" if value else "NÃ£o"
+    return "Sim" if value else "Não"
 
 
 def broadcast_mode_label(mode: object) -> str:
     if mode == "all":
-        return "Todos os usuÃ¡rios"
+        return "Todos os usuários"
     if mode == "single":
-        return "UsuÃ¡rio especÃ­fico"
-    return "NÃ£o definido"
+        return "Usuário específico"
+    return "Não definido"
 
 
 def broadcast_user_ids() -> list[int]:
@@ -907,16 +913,16 @@ def broadcast_ready(data: dict[str, object]) -> bool:
 def broadcast_schedule_label(data: dict[str, object]) -> str:
     value = data.get("schedule_at")
     if not value:
-        return "NÃ£o"
+        return "Não"
     try:
-        return datetime.fromtimestamp(float(value)).strftime("%d/%m/%Y %H:%M")
+        return datetime.fromtimestamp(float(value), BRASILIA_TZ).strftime("%d/%m/%Y %H:%M")
     except Exception:
         return "Sim"
 
 
 def broadcast_parse_when(raw: str) -> float | None:
     text = raw.strip().lower()
-    now = datetime.now()
+    now = datetime.now(BRASILIA_TZ)
     match = re.fullmatch(r"(\d{1,2}):(\d{2})", text)
     if match:
         hour, minute = int(match.group(1)), int(match.group(2))
@@ -926,7 +932,7 @@ def broadcast_parse_when(raw: str) -> float | None:
         if dt <= now:
             dt += timedelta(days=1)
         return dt.timestamp()
-    match = re.fullmatch(r"(hoje|amanh[Ã£a])\s+(\d{1,2}):(\d{2})", text)
+    match = re.fullmatch("(hoje|amanh[\u00e3a?])\\s+(\\d{1,2}):(\\d{2})", text)
     if match:
         hour, minute = int(match.group(2)), int(match.group(3))
         if hour > 23 or minute > 59:
@@ -939,13 +945,12 @@ def broadcast_parse_when(raw: str) -> float | None:
         return dt.timestamp()
     for fmt in ("%d/%m/%Y %H:%M", "%Y-%m-%d %H:%M"):
         try:
-            dt = datetime.strptime(text, fmt)
+            dt = datetime.strptime(text, fmt).replace(tzinfo=BRASILIA_TZ)
         except ValueError:
             continue
         if dt > now:
             return dt.timestamp()
     return None
-
 
 def broadcast_parse_buttons(raw: str) -> tuple[list[list[dict[str, str]]], str | None]:
     rows: list[list[dict[str, str]]] = []
@@ -957,11 +962,11 @@ def broadcast_parse_buttons(raw: str) -> tuple[list[list[dict[str, str]]], str |
         for part in re.split(r"\s+&&\s+", line):
             match = re.match(r"^(.+?)\s+-\s+(.+)$", part.strip())
             if not match:
-                return [], "Use o formato: Texto do botÃ£o - link"
+                return [], "Use o formato: Texto do botão - link"
             label = match.group(1).strip()
             value = match.group(2).strip()
             if not label or len(label) > 64:
-                return [], "O texto de cada botÃ£o precisa ter atÃ© 64 caracteres."
+                return [], "O texto de cada botão precisa ter até 64 caracteres."
             lowered = value.lower()
             if lowered.startswith(("popup:", "alert:")):
                 payload = value.split(":", 1)[1].strip()
@@ -971,19 +976,19 @@ def broadcast_parse_buttons(raw: str) -> tuple[list[list[dict[str, str]]], str |
             elif lowered.startswith("share:"):
                 payload = value.split(":", 1)[1].strip()
                 if not payload:
-                    return [], "O botÃ£o de compartilhamento precisa ter texto ou link."
+                    return [], "O botão de compartilhamento precisa ter texto ou link."
                 row.append({"type": "url", "text": label, "value": "https://t.me/share/url?url=" + quote_plus(payload)})
             else:
                 if value.startswith("t.me/"):
                     value = "https://" + value
                 if not value.startswith(("http://", "https://", "tg://")):
-                    return [], "Links precisam comeÃ§ar com http://, https://, tg:// ou t.me/"
+                    return [], "Links precisam começar com http://, https://, tg:// ou t.me/"
                 row.append({"type": "url", "text": label, "value": value})
         rows.append(row)
     if not rows:
-        return [], "Envie pelo menos um botÃ£o."
+        return [], "Envie pelo menos um botão."
     if sum(len(row) for row in rows) > 16:
-        return [], "Use no mÃ¡ximo 16 botÃµes."
+        return [], "Use no máximo 16 botões."
     return rows, None
 
 
@@ -1096,8 +1101,8 @@ def broadcast_prompt_buttons(remove_action: str | None = None):
 def broadcast_templates_buttons(templates: list[dict[str, object]]):
     rows = []
     for index, template in enumerate(templates[:BROADCAST_TEMPLATE_LIMIT]):
-        rows.append([Button.inline(f"ðŸ“Œ {str(template.get('name') or f'Modelo {index + 1}')[:32]}", f"bc:load_template:{index}".encode())])
-    rows.append([Button.inline("ðŸ”™ Voltar", b"bc:menu")])
+        rows.append([Button.inline(f"📌 {str(template.get('name') or f'Modelo {index + 1}')[:32]}", f"bc:load_template:{index}".encode())])
+    rows.append([Button.inline("🔙 Voltar", b"bc:menu")])
     return rows
 
 
@@ -1123,11 +1128,11 @@ def broadcast_view_text(title: str, body: str) -> str:
 def broadcast_preview_text(data: dict[str, object]) -> str:
     text = str(data.get("text") or "").strip()
     lines = [
-        "ðŸ‘€ <b>PrÃ©via da transmissÃ£o</b>",
+        "👀 <b>Prévia da transmissão</b>",
         "",
         f"<b>Destino:</b> <code>{h(broadcast_mode_label(data.get('mode')))}</code>",
-        f"<b>MÃ­dia:</b> <code>{broadcast_yes_no(bool(data.get('media_message_id')))}</code>",
-        f"<b>BotÃµes:</b> <code>{broadcast_button_count(data)}</code>",
+        f"<b>Mídia:</b> <code>{broadcast_yes_no(bool(data.get('media_message_id')))}</code>",
+        f"<b>Botões:</b> <code>{broadcast_button_count(data)}</code>",
         f"<b>Fixar:</b> <code>{broadcast_yes_no(bool(data.get('pin')))}</code>",
         f"<b>Agendado:</b> <code>{h(broadcast_schedule_label(data))}</code>",
     ]
@@ -1185,7 +1190,7 @@ async def broadcast_send_one(user_id: int, data: dict[str, object], should_pin: 
             source = await client.get_messages(int(media_chat_id), ids=int(media_message_id))
             sent = await client.send_file(user_id, source.media, caption=text or None, parse_mode="html", buttons=buttons)
         else:
-            sent = await client.send_message(user_id, text or "ðŸ“¢", parse_mode="html", buttons=buttons, link_preview=False)
+            sent = await client.send_message(user_id, text or "📢", parse_mode="html", buttons=buttons, link_preview=False)
         if should_pin and sent:
             try:
                 await client.pin_message(user_id, sent, notify=False)
@@ -1202,9 +1207,9 @@ async def broadcast_send_one(user_id: int, data: dict[str, object], should_pin: 
 
 async def broadcast_send_test(admin_id: int, data: dict[str, object]) -> tuple[bool, str]:
     if not broadcast_ready(data):
-        return False, "Defina uma mensagem ou mÃ­dia antes do teste."
+        return False, "Defina uma mensagem ou mídia antes do teste."
     ok, _ = await broadcast_send_one(admin_id, data, False)
-    return ok, "Teste enviado para vocÃª." if ok else "NÃ£o consegui enviar o teste."
+    return ok, "Teste enviado para você." if ok else "Não consegui enviar o teste."
 
 
 async def broadcast_execute(admin_chat_id: int, reply_to: int | None, data: dict[str, object]) -> None:
@@ -1217,29 +1222,29 @@ async def broadcast_execute(admin_chat_id: int, reply_to: int | None, data: dict
             await send_html(admin_chat_id, "Defina o destino primeiro.", reply_to=reply_to)
             return
         if not has_content:
-            await send_html(admin_chat_id, "Defina pelo menos uma mensagem ou mÃ­dia.", reply_to=reply_to)
+            await send_html(admin_chat_id, "Defina pelo menos uma mensagem ou mídia.", reply_to=reply_to)
             return
         if mode == "single":
             target_user_id = data.get("target_user_id")
             if not isinstance(target_user_id, int):
-                await send_html(admin_chat_id, "Envie um ID numÃ©rico vÃ¡lido.", reply_to=reply_to)
+                await send_html(admin_chat_id, "Envie um ID numérico válido.", reply_to=reply_to)
                 return
             ok, should_remove = await broadcast_send_one(target_user_id, data, requested_pin)
             if should_remove:
                 broadcast_remove_user(target_user_id)
-            await send_html(admin_chat_id, f"âœ… Envio finalizado.\n\nðŸ“¤ <b>Enviadas:</b> <code>{1 if ok else 0}</code>\nâŒ <b>Falhas:</b> <code>{0 if ok else 1}</code>", reply_to=reply_to)
+            await send_html(admin_chat_id, f"✅ Envio finalizado.\n\n📤 <b>Enviadas:</b> <code>{1 if ok else 0}</code>\n❌ <b>Falhas:</b> <code>{0 if ok else 1}</code>", reply_to=reply_to)
             return
 
         users = broadcast_user_ids()
         if not users:
-            await send_html(admin_chat_id, "NÃ£o hÃ¡ usuÃ¡rios salvos ainda.", reply_to=reply_to)
+            await send_html(admin_chat_id, "Não há usuários salvos ainda.", reply_to=reply_to)
             return
         total = len(users)
         should_pin = requested_pin and total <= BROADCAST_PIN_LIMIT
         pin_warning = ""
         if requested_pin and not should_pin:
-            pin_warning = f"\nðŸ“Œ <b>Fixar foi desativado automaticamente</b> para listas acima de <code>{BROADCAST_PIN_LIMIT}</code> usuÃ¡rios."
-        status = await send_html(admin_chat_id, f"ðŸš€ Iniciando transmissÃ£o...\n\nðŸ‘¥ <b>Total alvo:</b> <code>{total}</code>{pin_warning}", buttons=broadcast_running_buttons(), reply_to=reply_to)
+            pin_warning = f"\n📌 <b>Fixar foi desativado automaticamente</b> para listas acima de <code>{BROADCAST_PIN_LIMIT}</code> usuários."
+        status = await send_html(admin_chat_id, f"🚀 Iniciando transmissão...\n\n👥 <b>Total alvo:</b> <code>{total}</code>{pin_warning}", buttons=broadcast_running_buttons(), reply_to=reply_to)
         queue: asyncio.Queue[int | None] = asyncio.Queue()
         counters = {"sent": 0, "failed": 0, "processed": 0, "removed": 0, "last": time.monotonic()}
         for user_id in users:
@@ -1249,8 +1254,11 @@ async def broadcast_execute(admin_chat_id: int, reply_to: int | None, data: dict
 
         async def update_status() -> None:
             remaining = max(0, total - int(counters["processed"]))
-            title = "â¸ <b>TransmissÃ£o pausada</b>" if BROADCAST_CONTROL.get("paused") else "ðŸ›‘ <b>Cancelando transmissÃ£o...</b>" if BROADCAST_CONTROL.get("cancelled") else "ðŸš€ <b>TransmissÃ£o em andamento...</b>"
-            await edit_html(status, f"{title}\n\nâœ… <b>Enviadas:</b> <code>{counters['sent']}</code>\nâŒ <b>Falhas:</b> <code>{counters['failed']}</code>\nðŸ“¦ <b>Processadas:</b> <code>{counters['processed']}/{total}</code>\nâ³ <b>Restantes:</b> <code>{remaining}</code>", buttons=broadcast_running_buttons())
+            title = "\u23f8 <b>Transmiss\u00e3o pausada</b>" if BROADCAST_CONTROL.get("paused") else "\U0001f6d1 <b>Cancelando transmiss\u00e3o...</b>" if BROADCAST_CONTROL.get("cancelled") else "\U0001f680 <b>Transmiss\u00e3o em andamento...</b>"
+            try:
+                await edit_html(status, f"{title}\n\n\u2705 <b>Enviadas:</b> <code>{counters['sent']}</code>\n\u274c <b>Falhas:</b> <code>{counters['failed']}</code>\n\U0001f4e6 <b>Processadas:</b> <code>{counters['processed']}/{total}</code>\n\u23f3 <b>Restantes:</b> <code>{remaining}</code>", buttons=broadcast_running_buttons())
+            except Exception:
+                logger.debug("Falha ao atualizar status do broadcast", exc_info=True)
 
         async def worker() -> None:
             while True:
@@ -1261,7 +1269,8 @@ async def broadcast_execute(admin_chat_id: int, reply_to: int | None, data: dict
                     while BROADCAST_CONTROL.get("paused") and not BROADCAST_CONTROL.get("cancelled"):
                         await asyncio.sleep(1)
                     if BROADCAST_CONTROL.get("cancelled"):
-                        return
+                        counters["processed"] += 1
+                        continue
                     ok, should_remove = await broadcast_send_one(int(user_id), data, should_pin)
                     if ok:
                         counters["sent"] += 1
@@ -1282,8 +1291,8 @@ async def broadcast_execute(admin_chat_id: int, reply_to: int | None, data: dict
         workers = [asyncio.create_task(worker()) for _ in range(BROADCAST_WORKERS)]
         await queue.join()
         await asyncio.gather(*workers, return_exceptions=True)
-        final_title = "ðŸ›‘ <b>TransmissÃ£o cancelada.</b>" if BROADCAST_CONTROL.get("cancelled") else "âœ… <b>TransmissÃ£o finalizada.</b>"
-        await edit_html(status, f"{final_title}\n\nðŸ“¤ <b>Enviadas:</b> <code>{counters['sent']}</code>\nâŒ <b>Falhas:</b> <code>{counters['failed']}</code>\nðŸ§¹ <b>Removidos:</b> <code>{counters['removed']}</code>\nðŸ‘¥ <b>Total processado:</b> <code>{counters['processed']}</code>")
+        final_title = "🛑 <b>Transmissão cancelada.</b>" if BROADCAST_CONTROL.get("cancelled") else "✅ <b>Transmissão finalizada.</b>"
+        await edit_html(status, f"{final_title}\n\n📤 <b>Enviadas:</b> <code>{counters['sent']}</code>\n❌ <b>Falhas:</b> <code>{counters['failed']}</code>\n🧹 <b>Removidos:</b> <code>{counters['removed']}</code>\n👥 <b>Total processado:</b> <code>{counters['processed']}</code>")
     finally:
         BROADCAST_RUNNING = False
         BROADCAST_CONTROL = {"paused": False, "cancelled": False}
@@ -1301,27 +1310,27 @@ async def broadcast_start_send(event, data: dict[str, object], message) -> None:
     global BROADCAST_RUNNING, BROADCAST_CONTROL
     chat_id = int(event.chat_id)
     if BROADCAST_RUNNING:
-        await event.answer("JÃ¡ existe uma transmissÃ£o em andamento.", alert=True)
+        await event.answer("Já existe uma transmissão em andamento.", alert=True)
         return
     if data.get("mode") not in {"all", "single"}:
         await event.answer("Defina o destino primeiro.", alert=True)
         return
     if not broadcast_ready(data):
-        await event.answer("Defina uma mensagem ou mÃ­dia antes de enviar.", alert=True)
+        await event.answer("Defina uma mensagem ou mídia antes de enviar.", alert=True)
         return
     total = 1 if data.get("mode") == "single" else broadcast_total_users()
     if data.get("pin") and total > BROADCAST_PIN_LIMIT:
         data["pin"] = False
     if data.get("pin") and total > BROADCAST_PIN_WARN_USERS and not data.get("confirm_pin"):
         data["confirm_pin"] = True
-        await edit_html(message, f"ðŸ“Œ <b>Fixar mensagem exige cuidado</b>\n\n<blockquote>VocÃª estÃ¡ tentando fixar para <code>{total}</code> usuÃ¡rios. Confirma mesmo assim?</blockquote>", buttons=broadcast_confirm_buttons())
+        await edit_html(message, f"📌 <b>Fixar mensagem exige cuidado</b>\n\n<blockquote>Você está tentando fixar para <code>{total}</code> usuários. Confirma mesmo assim?</blockquote>", buttons=broadcast_confirm_buttons())
         return
     safe = dict(data)
     safe["confirm_pin"] = False
     data["confirm_pin"] = False
     if safe.get("schedule_at") and float(safe["schedule_at"]) > time.time():
         asyncio.create_task(broadcast_schedule_runner(chat_id, int(message.id), safe, float(safe["schedule_at"])))
-        await broadcast_show_menu(actor_id(event), chat_id, note=f"TransmissÃ£o agendada para <code>{h(broadcast_schedule_label(data))}</code>.")
+        await broadcast_show_menu(actor_id(event), chat_id, note=f"Transmissão agendada para <code>{h(broadcast_schedule_label(data))}</code>.")
         return
     BROADCAST_RUNNING = True
     BROADCAST_CONTROL = {"paused": False, "cancelled": False}
@@ -1344,7 +1353,7 @@ async def broadcast_handler(event) -> None:
 @client.on(events.CallbackQuery(pattern=b"^bc_pub:"))
 async def broadcast_public_callback(event) -> None:
     token_value = event.data.decode("utf-8").split(":", 1)[1]
-    await event.answer(BROADCAST_ALERTS.get(token_value, "Aviso indisponÃ­vel."), alert=True)
+    await event.answer(BROADCAST_ALERTS.get(token_value, "Aviso indisponível."), alert=True)
 
 
 @client.on(events.CallbackQuery(pattern=b"^bc:"))
@@ -1365,10 +1374,10 @@ async def broadcast_callback(event) -> None:
 
     if action == "pause":
         BROADCAST_CONTROL["paused"] = True
-        await event.answer("TransmissÃ£o pausada.")
+        await event.answer("Transmissão pausada.")
     elif action == "resume":
         BROADCAST_CONTROL["paused"] = False
-        await event.answer("TransmissÃ£o retomada.")
+        await event.answer("Transmissão retomada.")
     elif action == "cancel_running":
         BROADCAST_CONTROL["cancelled"] = True
         BROADCAST_CONTROL["paused"] = False
@@ -1390,7 +1399,7 @@ async def broadcast_callback(event) -> None:
     elif action == "mode_all":
         data["mode"] = "all"
         data["target_user_id"] = None
-        await broadcast_show_menu(admin_id, chat_id, note="Destino definido para todos os usuÃ¡rios.")
+        await broadcast_show_menu(admin_id, chat_id, note="Destino definido para todos os usuários.")
     elif action == "mode_single":
         data["mode"] = "single"
         data["step"] = "awaiting_target_user_id"
@@ -1407,44 +1416,23 @@ async def broadcast_callback(event) -> None:
     elif action == "schedule":
         data["step"] = "awaiting_schedule"
         await edit_html(message, "\U0001f5d3 <b>Agendar transmiss\u00e3o</b>\n\n<i>Envie o hor\u00e1rio desejado.</i>\n\n<blockquote>20:00\nhoje 20:00\namanh\u00e3 12:00\n25/12/2026 08:30</blockquote>", buttons=broadcast_prompt_buttons("remove_schedule"))
-    elif action == "save_template":
-        if not broadcast_ready(data):
-            await event.answer("Defina texto ou mÃ­dia antes de salvar.", alert=True)
-            return
-        data["step"] = "awaiting_template_name"
-        await edit_html(message, "ðŸ’¾ <b>Salvar modelo</b>\n\n<i>Envie um nome curto para este modelo.</i>", buttons=broadcast_prompt_buttons())
-    elif action == "use_template":
-        templates = broadcast_load_templates()
-        if not templates:
-            await broadcast_show_menu(admin_id, chat_id, note="Nenhum modelo salvo ainda.")
-        else:
-            await edit_html(message, "ðŸ“š <b>Modelos salvos</b>\n\n<i>Escolha um modelo para carregar no painel.</i>", buttons=broadcast_templates_buttons(templates))
-    elif action == "load_template" and len(parts) >= 3:
-        templates = broadcast_load_templates()
-        try:
-            template = templates[int(parts[2])]
-        except Exception:
-            await event.answer("Modelo nÃ£o encontrado.", alert=True)
-            return
-        broadcast_apply_template(data, template)
-        await broadcast_show_menu(admin_id, chat_id, note=f"Modelo carregado: <code>{h(template.get('name'))}</code>.")
     elif action == "remove_media":
         data["media_chat_id"] = None
         data["media_message_id"] = None
-        await broadcast_show_menu(admin_id, chat_id, note="MÃ­dia removida.")
+        await broadcast_show_menu(admin_id, chat_id, note="Mídia removida.")
     elif action == "remove_text":
         data["text"] = ""
         await broadcast_show_menu(admin_id, chat_id, note="Texto removido.")
     elif action == "remove_buttons":
         data["button_rows"] = []
-        await broadcast_show_menu(admin_id, chat_id, note="BotÃµes removidos.")
+        await broadcast_show_menu(admin_id, chat_id, note="Botões removidos.")
     elif action == "remove_schedule":
         data["schedule_at"] = None
         await broadcast_show_menu(admin_id, chat_id, note="Agendamento removido.")
     elif action == "toggle_pin":
         data["pin"] = not bool(data.get("pin"))
         data["confirm_pin"] = False
-        await broadcast_show_menu(admin_id, chat_id, note="Fixar ativado. HaverÃ¡ trava automÃ¡tica para listas grandes." if data["pin"] else "Fixar desativado.")
+        await broadcast_show_menu(admin_id, chat_id, note="Fixar ativado. Haverá trava automática para listas grandes." if data["pin"] else "Fixar desativado.")
     elif action == "view_media":
         body = "M\u00eddia configurada." if bool(data.get("media_message_id")) else "Nenhuma m\u00eddia configurada."
         await edit_html(message, broadcast_view_text("\U0001f5bc\ufe0f <b>M\u00eddia</b>", body), buttons=broadcast_prompt_buttons())
@@ -1493,64 +1481,52 @@ async def handle_broadcast_input(event, language: str) -> bool:
     if step == "awaiting_target_user_id":
         raw = text.strip()
         if not raw.isdigit():
-            await broadcast_render_panel(admin_id, chat_id, "ðŸ‘¤ <b>Envie o ID do usuÃ¡rio</b>\n\n<blockquote>Envie um ID numÃ©rico vÃ¡lido.</blockquote>", broadcast_prompt_buttons())
+            await broadcast_render_panel(admin_id, chat_id, "👤 <b>Envie o ID do usuário</b>\n\n<blockquote>Envie um ID numérico válido.</blockquote>", broadcast_prompt_buttons())
             await broadcast_delete_event(event)
             return True
         data["mode"] = "single"
         data["target_user_id"] = int(raw)
-        await broadcast_show_menu(admin_id, chat_id, note=f"UsuÃ¡rio alvo salvo: <code>{h(raw)}</code>.")
+        await broadcast_show_menu(admin_id, chat_id, note=f"Usuário alvo salvo: <code>{h(raw)}</code>.")
         await broadcast_delete_event(event)
         return True
     if step == "awaiting_media":
         if not getattr(event.message, "media", None):
-            await broadcast_render_panel(admin_id, chat_id, "ðŸ–¼ <b>Envie uma mÃ­dia vÃ¡lida</b>\n\n<blockquote>Fotos, vÃ­deos, arquivos, figurinhas, GIFs, Ã¡udios e mensagens de voz sÃ£o aceitos.</blockquote>", broadcast_prompt_buttons("remove_media"))
+            await broadcast_render_panel(admin_id, chat_id, "🖼 <b>Envie uma mídia válida</b>\n\n<blockquote>Fotos, vídeos, arquivos, figurinhas, GIFs, áudios e mensagens de voz são aceitos.</blockquote>", broadcast_prompt_buttons("remove_media"))
             await broadcast_delete_event(event)
             return True
         data["media_chat_id"] = chat_id
         data["media_message_id"] = int(event.message.id)
-        await broadcast_show_menu(admin_id, chat_id, note="MÃ­dia salva com sucesso.")
+        await broadcast_show_menu(admin_id, chat_id, note="Mídia salva com sucesso.")
         await broadcast_delete_event(event)
         return True
     if step == "awaiting_text":
         raw = broadcast_event_html(event)
         if not raw:
-            await broadcast_render_panel(admin_id, chat_id, "ðŸ“ <b>Envie a mensagem da postagem</b>\n\n<blockquote>Envie um texto para continuar.</blockquote>", broadcast_prompt_buttons("remove_text"))
+            await broadcast_render_panel(admin_id, chat_id, "📝 <b>Envie a mensagem da postagem</b>\n\n<blockquote>Envie um texto para continuar.</blockquote>", broadcast_prompt_buttons("remove_text"))
             await broadcast_delete_event(event)
             return True
         data["text"] = raw
-        await broadcast_show_menu(admin_id, chat_id, note="Mensagem salva com formataÃ§Ã£o.")
+        await broadcast_show_menu(admin_id, chat_id, note="Mensagem salva com formatação.")
         await broadcast_delete_event(event)
         return True
     if step == "awaiting_buttons":
         rows, error = broadcast_parse_buttons(text)
         if error:
-            await broadcast_render_panel(admin_id, chat_id, f"ðŸ”˜ <b>Defina os botÃµes da postagem</b>\n\n<blockquote>{h(error)}</blockquote>", broadcast_prompt_buttons("remove_buttons"))
+            await broadcast_render_panel(admin_id, chat_id, f"🔘 <b>Defina os botões da postagem</b>\n\n<blockquote>{h(error)}</blockquote>", broadcast_prompt_buttons("remove_buttons"))
             await broadcast_delete_event(event)
             return True
         data["button_rows"] = rows
-        await broadcast_show_menu(admin_id, chat_id, note=f"{broadcast_button_count(data)} botÃ£o(Ãµes) salvo(s).")
+        await broadcast_show_menu(admin_id, chat_id, note=f"{broadcast_button_count(data)} botão(ões) salvo(s).")
         await broadcast_delete_event(event)
         return True
     if step == "awaiting_schedule":
         when_ts = broadcast_parse_when(text)
         if not when_ts:
-            await broadcast_render_panel(admin_id, chat_id, "ðŸ—“ <b>Agendar transmissÃ£o</b>\n\n<blockquote>NÃ£o entendi esse horÃ¡rio. Envie uma data futura.</blockquote>", broadcast_prompt_buttons("remove_schedule"))
+            await broadcast_render_panel(admin_id, chat_id, "🗓 <b>Agendar transmissão</b>\n\n<blockquote>Não entendi esse horário. Envie uma data futura.</blockquote>", broadcast_prompt_buttons("remove_schedule"))
             await broadcast_delete_event(event)
             return True
         data["schedule_at"] = when_ts
         await broadcast_show_menu(admin_id, chat_id, note=f"Agendado para <code>{h(broadcast_schedule_label(data))}</code>.")
-        await broadcast_delete_event(event)
-        return True
-    if step == "awaiting_template_name":
-        name = text.strip()[:40]
-        if not name:
-            await broadcast_render_panel(admin_id, chat_id, "ðŸ’¾ <b>Salvar modelo</b>\n\n<blockquote>Envie um nome vÃ¡lido.</blockquote>", broadcast_prompt_buttons())
-            await broadcast_delete_event(event)
-            return True
-        templates = broadcast_load_templates()
-        templates.insert(0, broadcast_template_payload(data, name))
-        broadcast_save_templates(templates)
-        await broadcast_show_menu(admin_id, chat_id, note=f"Modelo salvo: <code>{h(name)}</code>.")
         await broadcast_delete_event(event)
         return True
     return False

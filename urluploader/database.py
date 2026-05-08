@@ -182,6 +182,52 @@ class PremiumStore:
         self._known_users.add(user_id)
         self._language_cache[user_id] = language
 
+    def get_plan(self, user_id: int) -> str:
+        with self.connection() as db:
+            row = db.execute("SELECT plan FROM users WHERE user_id=?", (user_id,)).fetchone()
+        return str(row["plan"]) if row and row["plan"] else "free"
+
+    def set_plan(self, user_id: int, plan: str, actor_id: int | None = None) -> None:
+        now = int(time.time())
+        with self.connection() as db:
+            db.execute(
+                """
+                INSERT INTO users(user_id, plan, created_at, updated_at)
+                VALUES(?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET plan=excluded.plan, updated_at=excluded.updated_at
+                """,
+                (user_id, plan, now, now),
+            )
+            db.execute("INSERT OR IGNORE INTO preferences(user_id) VALUES(?)", (user_id,))
+            db.execute(
+                "INSERT INTO audit(actor_id, action, details, created_at) VALUES(?, ?, ?, ?)",
+                (actor_id or 0, "set_plan", json.dumps({"user_id": user_id, "plan": plan}), now),
+            )
+        self._known_users.add(user_id)
+
+    def daily_usage_bytes(self, user_id: int, since: int | None = None) -> int:
+        if since is None:
+            now = int(time.time())
+            since = now - (now % 86400)
+        with self.connection() as db:
+            row = db.execute(
+                """
+                SELECT COALESCE(SUM(bytes_out), 0)
+                FROM jobs
+                WHERE user_id=?
+                  AND status='done'
+                  AND updated_at>=?
+                """,
+                (user_id, since),
+            ).fetchone()
+        return int(row[0] or 0)
+
+    def last_job_created_at(self, user_id: int) -> int | None:
+        with self.connection() as db:
+            row = db.execute("SELECT MAX(created_at) FROM jobs WHERE user_id=?", (user_id,)).fetchone()
+        value = int(row[0] or 0)
+        return value or None
+
     def set_thumb(self, user_id: int, path: str | None) -> None:
         with self.connection() as db:
             db.execute(

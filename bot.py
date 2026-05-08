@@ -51,6 +51,7 @@ from urluploader.names import (
     unique_path,
 )
 from urluploader.parallel_upload import should_parallel_upload, upload_big_file_parallel, upload_workers_for_size
+from urluploader.plans import ADMIN_PLAN, PLANS, Plan, normalize_plan_key, plan_catalog_text, plan_for_key
 from urluploader.premium_i18n import normalize_language, tx
 from urluploader.progress import ProgressEditor, human_size, render_progress
 from urluploader.runtime import RateLimiter, SessionManager
@@ -266,6 +267,66 @@ def is_admin(user_id: int) -> bool:
     return user_id in settings.admin_ids
 
 
+def user_plan(user_id: int) -> Plan:
+    if is_admin(user_id):
+        return ADMIN_PLAN
+    return plan_for_key(store.get_plan(user_id))
+
+
+def plan_limit_text(size: int | None) -> str:
+    return "Ilimitado" if size is None else human_size(size)
+
+
+def render_plan_status(user_id: int) -> str:
+    plan = user_plan(user_id)
+    used = store.daily_usage_bytes(user_id)
+    quota = plan_limit_text(plan.daily_quota)
+    timeout = "sem timeout" if plan.timeout_seconds is None else f"{plan.timeout_seconds // 60} min"
+    cooldown = "sem intervalo" if plan.cooldown_seconds <= 0 else f"{plan.cooldown_seconds}s entre tarefas"
+    return (
+        f"<b>Seu plano: {plan.name}</b>\n\n"
+        f"Arquivo maximo: <code>{plan_limit_text(plan.max_file_size)}</code>\n"
+        f"Uso diario: <code>{human_size(used)} / {quota}</code>\n"
+        f"Processos paralelos: <code>{plan.parallel_jobs}</code>\n"
+        f"Tempo limite: <code>{timeout}</code>\n"
+        f"Intervalo: <code>{cooldown}</code>\n\n"
+        f"{plan_catalog_text()}"
+    )
+
+
+def plan_rejection(user_id: int, size: int | None = None) -> str | None:
+    if is_admin(user_id):
+        return None
+    plan = user_plan(user_id)
+    if active_count(user_id) >= plan.parallel_jobs:
+        return f"Seu plano permite {plan.parallel_jobs} processo(s) paralelo(s). Aguarde a tarefa atual terminar."
+    if size is not None and plan.max_file_size is not None and size > plan.max_file_size:
+        return f"Seu plano aceita arquivos ate {human_size(plan.max_file_size)}. Este arquivo tem {human_size(size)}."
+    if size is not None and plan.daily_quota is not None:
+        used = store.daily_usage_bytes(user_id)
+        if used + size > plan.daily_quota:
+            return f"Seu limite diario e {human_size(plan.daily_quota)}. Hoje voce ja usou {human_size(used)}."
+    if plan.cooldown_seconds > 0:
+        last_job = store.last_job_created_at(user_id)
+        if last_job:
+            remaining = plan.cooldown_seconds - (int(time.time()) - last_job)
+            if remaining > 0:
+                return f"Seu plano gratuito tem intervalo entre tarefas. Aguarde {remaining}s."
+    return None
+
+
+async def estimated_target_size(target: PendingTarget) -> int | None:
+    if target.direct_info and target.direct_info.size:
+        return int(target.direct_info.size)
+    if target.source == "telegram_file" and target.message_id:
+        try:
+            message = await client.get_messages(target.chat_id, ids=target.message_id)
+            return message_size(message) if message else None
+        except Exception:
+            return None
+    return None
+
+
 def group_allowed(chat_id: int) -> bool:
     if not settings.group_auto_download or not settings.group_silent_mode:
         return settings.group_auto_download
@@ -330,6 +391,7 @@ def main_menu(language: str):
         [Button.inline(tx(language, "btn_menu_download"), b"menu:download"), Button.inline(tx(language, "btn_menu_upload"), b"menu:upload")],
         [Button.inline(tx(language, "btn_menu_tools"), b"menu:tools"), Button.inline(tx(language, "btn_menu_links"), b"menu:links")],
         [Button.inline(tx(language, "btn_menu_tasks"), b"menu:tasks"), Button.inline(tx(language, "btn_menu_settings"), b"menu:settings")],
+        [Button.inline(tx(language, "btn_menu_premium"), b"menu:premium")],
         [Button.inline(tx(language, "btn_menu_thumb"), b"menu:thumb"), Button.inline(tx(language, "btn_menu_help"), b"menu:help")],
     ]
 
@@ -682,6 +744,34 @@ async def tasks_handler(event) -> None:
     await send_html(event.chat_id, task_panel(language, actor_id(event)), buttons=back_buttons(language))
 
 
+@client.on(events.NewMessage(pattern=r"(?i)^/(planos|plans|premium)(?:@\w+)?$"))
+async def plans_handler(event) -> None:
+    await send_html(event.chat_id, plan_catalog_text(), buttons=back_buttons(await language_for(event)))
+
+
+@client.on(events.NewMessage(pattern=r"(?i)^/(plano|myplan)(?:@\w+)?$"))
+async def my_plan_handler(event) -> None:
+    await send_html(event.chat_id, render_plan_status(actor_id(event)), buttons=back_buttons(await language_for(event)))
+
+
+@client.on(events.NewMessage(pattern=r"(?i)^/(liberar|release|setplan)(?:@\w+)?\s+(\d+)\s+([a-zA-Z0-9_-]+)"))
+async def release_plan_handler(event) -> None:
+    language = await language_for(event)
+    admin_id = actor_id(event)
+    if not is_admin(admin_id):
+        await answer(event, "not_admin", language)
+        return
+    target_user_id = int(event.pattern_match.group(2))
+    requested = event.pattern_match.group(3)
+    if requested.lower() not in PLANS:
+        await send_html(event.chat_id, "Plano invalido. Use: free, basico, standard ou pro.")
+        return
+    plan_key = normalize_plan_key(requested)
+    store.set_plan(target_user_id, plan_key, admin_id)
+    plan = plan_for_key(plan_key)
+    await send_html(event.chat_id, f"<b>Plano liberado</b>\nUsuario: <code>{target_user_id}</code>\nPlano: <code>{plan.name}</code>")
+
+
 @client.on(events.NewMessage(pattern=r"(?i)^/(admin|painel)(?:@\w+)?$"))
 async def admin_handler(event) -> None:
     language = await language_for(event)
@@ -767,7 +857,7 @@ async def menu_callback(event) -> None:
         await edit_html(message, tx(language, "menu_links", items=items), buttons=recent_link_buttons(language, links))
     elif action == "premium":
         sessions.clear(user_id)
-        await edit_html(message, tx(language, "menu_premium"), buttons=back_buttons(language))
+        await edit_html(message, render_plan_status(user_id), buttons=back_buttons(language))
     elif action == "help":
         sessions.clear(user_id)
         await edit_html(message, tx(language, "help"), buttons=back_buttons(language))
@@ -1324,7 +1414,13 @@ async def show_file_actions(event, language: str) -> None:
 async def schedule_job(event, target: PendingTarget, mode: UploadMode, status=None, *, silent: bool = False, ephemeral: bool = False) -> None:
     language = await language_for(event)
     user_id = actor_id(event)
-    if active_count(user_id) >= settings.max_jobs_per_user:
+    estimated_size = await estimated_target_size(target)
+    rejection = plan_rejection(user_id, estimated_size)
+    if rejection:
+        if not silent:
+            await edit_or_send(event, status, f"<b>Limite do plano</b>\n{h(rejection)}")
+        return
+    if active_count(user_id) >= max(settings.max_jobs_per_user, user_plan(user_id).parallel_jobs) and not is_admin(user_id):
         if not silent:
             await edit_or_send(event, status, tx(language, "rate_limited"))
         return
@@ -1333,7 +1429,8 @@ async def schedule_job(event, target: PendingTarget, mode: UploadMode, status=No
     logger.info("job_queue kind=%s user_id=%s chat_id=%s job_id=%s", target.source, user_id, target.chat_id, job_id)
     store.create_job(job_id, user_id, target.source, target.filename)
     status = status or (None if silent else await answer(event, "queued", language, buttons=cancel_button(language, job_id)))
-    task = asyncio.create_task(run_job_with_timeout(job_id, run_media_job(job_id, target, mode, status, language, ephemeral=ephemeral, silent=silent)))
+    timeout = user_plan(user_id).timeout_seconds
+    task = asyncio.create_task(run_job_with_timeout(job_id, run_media_job(job_id, target, mode, status, language, ephemeral=ephemeral, silent=silent), timeout))
     task.job_id = job_id  # type: ignore[attr-defined]
     task.target_token = target.token  # type: ignore[attr-defined]
     active_tasks.setdefault(user_id, set()).add(task)
@@ -1343,26 +1440,35 @@ async def schedule_job(event, target: PendingTarget, mode: UploadMode, status=No
 async def schedule_link_job(event, target: PendingTarget, status=None) -> None:
     language = await language_for(event)
     user_id = actor_id(event)
-    if active_count(user_id) >= settings.max_jobs_per_user:
+    estimated_size = await estimated_target_size(target)
+    rejection = plan_rejection(user_id, estimated_size)
+    if rejection:
+        await edit_or_send(event, status, f"<b>Limite do plano</b>\n{h(rejection)}")
+        return
+    if active_count(user_id) >= max(settings.max_jobs_per_user, user_plan(user_id).parallel_jobs) and not is_admin(user_id):
         await edit_or_send(event, status, tx(language, "rate_limited"))
         return
     job_id = uuid.uuid4().hex[:12]
     logger.info("link_queue user_id=%s chat_id=%s job_id=%s", user_id, target.chat_id, job_id)
     store.create_job(job_id, user_id, "link", target.filename)
     status = status or await answer(event, "queued", language, buttons=cancel_button(language, job_id))
-    task = asyncio.create_task(run_job_with_timeout(job_id, run_link_job(job_id, target, status, language)))
+    timeout = user_plan(user_id).timeout_seconds
+    task = asyncio.create_task(run_job_with_timeout(job_id, run_link_job(job_id, target, status, language), timeout))
     task.job_id = job_id  # type: ignore[attr-defined]
     task.target_token = target.token  # type: ignore[attr-defined]
     active_tasks.setdefault(user_id, set()).add(task)
     task.add_done_callback(lambda done: active_tasks.get(user_id, set()).discard(done))
 
 
-async def run_job_with_timeout(job_id: str, coro) -> None:
+async def run_job_with_timeout(job_id: str, coro, timeout_seconds: int | None = None) -> None:
     try:
-        await asyncio.wait_for(coro, timeout=settings.job_timeout_seconds)
+        if timeout_seconds is None:
+            await coro
+        else:
+            await asyncio.wait_for(coro, timeout=timeout_seconds)
     except asyncio.TimeoutError:
         store.update_job(job_id, "failed", error="job timeout")
-        logger.error("job_timeout job_id=%s timeout=%s", job_id, settings.job_timeout_seconds)
+        logger.error("job_timeout job_id=%s timeout=%s", job_id, timeout_seconds)
     except Exception:
         raise
 
@@ -1520,7 +1626,8 @@ async def run_media_job(job_id: str, target: PendingTarget, mode: UploadMode, st
             if await try_cached_file_send(job_id, target, mode, status, language, ephemeral):
                 return
             if await try_fast_remote_send(target, mode):
-                store.update_job(job_id, "done")
+                fast_size = int(target.direct_info.size or 0) if target.direct_info else 0
+                store.update_job(job_id, "done", bytes_in=fast_size, bytes_out=fast_size)
                 logger.info("job_done_fast job_id=%s kind=%s user_id=%s total_ms=%d", job_id, target.source, target.user_id, int((time.perf_counter() - started_at) * 1000))
                 if ephemeral:
                     await delete_status(status)
@@ -1542,6 +1649,9 @@ async def run_media_job(job_id: str, target: PendingTarget, mode: UploadMode, st
                     raise FileTooLargeError(
                         f"Arquivo acima do limite para grupos: {human_size(total_in)}. Limite: {human_size(settings.group_max_file_size)}."
                     )
+                rejection = plan_rejection(target.user_id, total_in)
+                if rejection:
+                    raise FileTooLargeError(rejection)
                 store.update_job(job_id, "running", bytes_in=total_in)
                 if target.conversion:
                     convert_started = time.perf_counter()
@@ -1559,6 +1669,9 @@ async def run_media_job(job_id: str, target: PendingTarget, mode: UploadMode, st
                         (converted_size / 1024 / 1024) / convert_elapsed if convert_elapsed > 0 else 0.0,
                         settings.turbo_mode,
                     )
+                    converted_rejection = plan_rejection(target.user_id, converted_size)
+                    if converted_rejection:
+                        raise FileTooLargeError(converted_rejection)
             await edit_status(
                 status,
                 tx(language, "stage_uploading", progress=render_progress(tx(language, "label_upload"), 0, sum(result.size for result in results), time.monotonic())),
@@ -1695,6 +1808,9 @@ async def run_link_job(job_id: str, target: PendingTarget, status, language: str
                 return
             async with download_slots:
                 result = (await materialize(target, "document", job_dir, status, language))[0]
+                rejection = plan_rejection(target.user_id, result.size)
+                if rejection:
+                    raise FileTooLargeError(rejection)
                 store.update_job(job_id, "running", bytes_in=result.size)
             if is_image_filename(result.filename):
                 try:

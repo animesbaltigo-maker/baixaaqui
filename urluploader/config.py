@@ -135,7 +135,7 @@ def load_settings() -> Settings:
     except ValueError as exc:
         raise RuntimeError("API_ID must be a number") from exc
 
-    max_file_size_mb = int(os.getenv("MAX_FILE_SIZE_MB", "1900"))
+    max_file_size_mb = int(os.getenv("MAX_FILE_SIZE_MB", "4096"))
     request_timeout = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "120"))
     progress_interval = float(os.getenv("PROGRESS_UPDATE_SECONDS", "8"))
     send_backend = os.getenv("SEND_BACKEND", "telethon").strip().lower()
@@ -175,7 +175,7 @@ def load_settings() -> Settings:
         max_concurrent_inspections=_int_from_env("MAX_CONCURRENT_INSPECTIONS", 60),
         max_concurrent_downloads=_int_from_env("MAX_CONCURRENT_DOWNLOADS", 25),
         max_concurrent_uploads=_int_from_env("MAX_CONCURRENT_UPLOADS", 8),
-        max_jobs_per_user=_int_from_env("MAX_JOBS_PER_USER", 1),
+        max_jobs_per_user=_int_from_env("MAX_JOBS_PER_USER", 3),
         social_download_enabled=_bool_from_env("SOCIAL_DOWNLOAD_ENABLED", False),
         ytdlp_format=os.getenv(
             "YTDLP_FORMAT",

@@ -1973,6 +1973,25 @@ async def send_result(target: PendingTarget, result: DownloadResult, mode: Uploa
     upload_progress_callback = progress.as_callback() if status else None
     force_document = send_mode == "document" and not (target.source.startswith("social") and is_image_filename(result.filename))
 
+    def upload_mbps(elapsed_seconds: float) -> float:
+        if elapsed_seconds <= 0:
+            return 0.0
+        return round((result.size / 1024 / 1024) / elapsed_seconds, 2)
+
+    def log_upload_done(backend: str, elapsed_seconds: float, *, workers: int | None = None) -> None:
+        logger.info(
+            "upload_done backend=%s chat_id=%s file=%s size=%s elapsed_ms=%d mbps=%.2f workers=%s local_bot_api=%s send_mode=%s",
+            backend,
+            target.chat_id,
+            result.filename,
+            result.size,
+            int(elapsed_seconds * 1000),
+            upload_mbps(elapsed_seconds),
+            workers if workers is not None else "-",
+            bot_api.is_local,
+            send_mode,
+        )
+
     async def upload_with_telethon(file_arg):
         attrs = []
         if send_mode == "video" and info and info.width and info.height:
@@ -2018,6 +2037,7 @@ async def send_result(target: PendingTarget, result: DownloadResult, mode: Uploa
         if not bot_api.supports_local_size(result.path):
             return False
         try:
+            started = time.perf_counter()
             response = await bot_api.send_local_file(
                 target.chat_id,
                 result.path,
@@ -2026,6 +2046,7 @@ async def send_result(target: PendingTarget, result: DownloadResult, mode: Uploa
                 mode=send_mode,
                 thumbnail=thumb if send_mode in {"video", "document"} and thumb and thumb.exists() else None,
             )
+            log_upload_done("bot_api_local" if bot_api.is_local else "bot_api_public", time.perf_counter() - started)
             remember_bot_api_file_id(target, mode, send_mode, response)
             return True
         except Exception as exc:
@@ -2039,6 +2060,7 @@ async def send_result(target: PendingTarget, result: DownloadResult, mode: Uploa
         if send_mode != "photo" and should_parallel_upload(result.path, settings.parallel_upload_enabled, settings.parallel_upload_threshold):
             try:
                 workers = upload_workers_for_size(result.size, settings.parallel_upload_workers)
+                started = time.perf_counter()
                 uploaded = await upload_big_file_parallel(
                     client,
                     result.path,
@@ -2047,6 +2069,7 @@ async def send_result(target: PendingTarget, result: DownloadResult, mode: Uploa
                     upload_progress_callback or (lambda _current, _total: None),
                 )
                 await upload_with_telethon(uploaded)
+                log_upload_done("telethon_parallel", time.perf_counter() - started, workers=workers)
                 return
             except Exception as exc:
                 logger.warning(
@@ -2058,7 +2081,9 @@ async def send_result(target: PendingTarget, result: DownloadResult, mode: Uploa
                     exc,
                 )
 
+        started = time.perf_counter()
         await upload_with_telethon(str(result.path))
+        log_upload_done("telethon_normal", time.perf_counter() - started)
     finally:
         if generated_thumb:
             generated_thumb.unlink(missing_ok=True)

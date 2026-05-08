@@ -277,21 +277,65 @@ def plan_limit_text(size: int | None) -> str:
     return "Ilimitado" if size is None else human_size(size)
 
 
-def render_plan_status(user_id: int) -> str:
-    plan = user_plan(user_id)
+def seconds_until_daily_reset() -> int:
+    now = int(time.time())
+    return 86400 - (now % 86400)
+
+
+def format_reset_countdown(seconds: int) -> str:
+    hours, remainder = divmod(max(0, seconds), 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours}h, {minutes}m, {secs}s"
+
+
+def render_plan_status(user_id: int, name: str, plan_key: str | None = None) -> str:
+    plan = user_plan(user_id) if plan_key is None else plan_for_key(plan_key)
     used = store.daily_usage_bytes(user_id)
-    quota = plan_limit_text(plan.daily_quota)
-    timeout = "sem timeout" if plan.timeout_seconds is None else f"{plan.timeout_seconds // 60} min"
-    cooldown = "sem intervalo" if plan.cooldown_seconds <= 0 else f"{plan.cooldown_seconds}s entre tarefas"
+    daily = "Ilimitado" if plan.daily_quota is None else f"{human_size(used)} / {human_size(plan.daily_quota)}"
+    timeout = "Sem tempo limite" if plan.timeout_seconds is None else f"{plan.timeout_seconds // 60} minutos"
+    cooldown = "Nao" if plan.cooldown_seconds <= 0 else "Sim"
+    max_file = plan_limit_text(plan.max_file_size)
+    lines = [
+        f"<b>ID do utilizador:</b> <code>{user_id}</code>",
+        f"<b>Nome:</b> {h(name)}",
+        "",
+        f"<b>💠 {plan.name}</b>",
+        "",
+    ]
+    if plan.high_priority:
+        lines.append("✓ Alta prioridade")
     return (
-        f"<b>Seu plano: {plan.name}</b>\n\n"
-        f"Arquivo maximo: <code>{plan_limit_text(plan.max_file_size)}</code>\n"
-        f"Uso diario: <code>{human_size(used)} / {quota}</code>\n"
-        f"Processos paralelos: <code>{plan.parallel_jobs}</code>\n"
-        f"Tempo limite: <code>{timeout}</code>\n"
-        f"Intervalo: <code>{cooldown}</code>\n\n"
-        f"{plan_catalog_text()}"
+        "\n".join(
+            lines
+            + [
+                f"✓ Carregar ficheiros de {max_file}",
+                f"✓ Carregamento diario: {daily}",
+                f"✓ Processo paralelo: {plan.parallel_jobs}",
+                f"✓ {timeout}",
+                f"✓ Intervalo de tempo: {cooldown}",
+                "✓ Validade: Para sempre",
+                "",
+                f"<b>O limite sera redefinido em {format_reset_countdown(seconds_until_daily_reset())}</b>",
+                "",
+                f"<b>Preco mensal:</b> {plan.price}",
+            ]
+        )
     )
+
+
+def plan_buttons() -> list[list[Button]]:
+    return [
+        [Button.inline("💠 Free", b"plan:view:free"), Button.inline("💠 Basic", b"plan:view:basico")],
+        [Button.inline("💠 Standard", b"plan:view:standard"), Button.inline("💠 Pro", b"plan:view:pro")],
+        [Button.inline("💫 Refresh", b"plan:refresh")],
+    ]
+
+
+def plan_detail_buttons(plan_key: str) -> list[list[Button]]:
+    return [
+        [Button.inline("💰 Opcoes de pagamento", f"plan:pay:{plan_key}".encode())],
+        [Button.inline("⇐", b"plan:refresh")],
+    ]
 
 
 def plan_rejection(user_id: int, size: int | None = None) -> str | None:
@@ -751,7 +795,9 @@ async def plans_handler(event) -> None:
 
 @client.on(events.NewMessage(pattern=r"(?i)^/(plano|myplan)(?:@\w+)?$"))
 async def my_plan_handler(event) -> None:
-    await send_html(event.chat_id, render_plan_status(actor_id(event)), buttons=back_buttons(await language_for(event)))
+    sender = await event.get_sender()
+    name = getattr(sender, "first_name", None) or "Usuario"
+    await send_html(event.chat_id, render_plan_status(actor_id(event), name), buttons=plan_buttons())
 
 
 @client.on(events.NewMessage(pattern=r"(?i)^/(liberar|release|setplan)(?:@\w+)?\s+(\d+)\s+([a-zA-Z0-9_-]+)"))
@@ -857,7 +903,9 @@ async def menu_callback(event) -> None:
         await edit_html(message, tx(language, "menu_links", items=items), buttons=recent_link_buttons(language, links))
     elif action == "premium":
         sessions.clear(user_id)
-        await edit_html(message, render_plan_status(user_id), buttons=back_buttons(language))
+        sender = await event.get_sender()
+        name = getattr(sender, "first_name", None) or "Usuario"
+        await edit_html(message, render_plan_status(user_id, name), buttons=plan_buttons())
     elif action == "help":
         sessions.clear(user_id)
         await edit_html(message, tx(language, "help"), buttons=back_buttons(language))
@@ -874,6 +922,36 @@ async def menu_callback(event) -> None:
         await edit_html(message, task_panel(language, actor_id(event)), buttons=back_buttons(language))
     else:
         await edit_html(message, tx(language, "menu_title"), buttons=main_menu(language))
+
+
+@client.on(events.CallbackQuery(pattern=b"^plan:"))
+async def plan_callback(event) -> None:
+    user_id = actor_id(event)
+    sender = await event.get_sender()
+    name = getattr(sender, "first_name", None) or "Usuario"
+    parts = event.data.decode("utf-8").split(":")
+    action = parts[1] if len(parts) > 1 else "refresh"
+    message = await event.get_message()
+    await event.answer()
+    if action == "view" and len(parts) >= 3:
+        plan_key = normalize_plan_key(parts[2])
+        await edit_html(message, render_plan_status(user_id, name, plan_key), buttons=plan_detail_buttons(plan_key))
+        return
+    if action == "pay" and len(parts) >= 3:
+        plan = plan_for_key(parts[2])
+        support = settings.bot_support_username or "admin"
+        await edit_html(
+            message,
+            (
+                f"<b>Pagamento - {plan.name}</b>\n\n"
+                f"Preco mensal: <code>{plan.price}</code>\n\n"
+                f"Para liberar manualmente, chame {h(support)} e envie seu ID:\n"
+                f"<code>{user_id}</code>"
+            ),
+            buttons=[[Button.inline("⇐", f"plan:view:{plan.key}".encode())]],
+        )
+        return
+    await edit_html(message, render_plan_status(user_id, name), buttons=plan_buttons())
 
 
 @client.on(events.CallbackQuery(pattern=b"^settings:"))

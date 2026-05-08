@@ -176,7 +176,7 @@ def load_settings() -> Settings:
         max_concurrent_downloads=_int_from_env("MAX_CONCURRENT_DOWNLOADS", 25),
         max_concurrent_uploads=_int_from_env("MAX_CONCURRENT_UPLOADS", 8),
         max_jobs_per_user=_int_from_env("MAX_JOBS_PER_USER", 1),
-        social_download_enabled=_bool_from_env("SOCIAL_DOWNLOAD_ENABLED", True),
+        social_download_enabled=_bool_from_env("SOCIAL_DOWNLOAD_ENABLED", False),
         ytdlp_format=os.getenv(
             "YTDLP_FORMAT",
             "best[ext=mp4][acodec!=none]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",

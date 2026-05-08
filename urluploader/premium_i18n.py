@@ -20,7 +20,7 @@ TEXTS: dict[str, dict[str, str]] = {
             "• Use <b>/cancelar</b> para limpar o fluxo atual."
         ),
         "menu_title": "<b>Central de controle</b>\nEscolha o que deseja fazer.",
-        "menu_download": "<b>Baixar por link</b>\n<i>Envie um link de rede social. No privado eu mostro opções quando fizer sentido; em grupos entrego o resultado final sem poluir o chat.</i>",
+        "menu_download": "<b>Baixar por link direto</b>\n<i>Envie uma URL direta de arquivo. Links de redes sociais não são aceitos.</i>",
         "menu_upload": "<b>Enviar por URL</b>\n<i>Envie uma URL direta de arquivo. Eu verifico nome, tamanho e tipo antes de baixar.</i>",
         "menu_tools": "<b>Ferramentas de mídia</b>\n<i>Envie vídeo, áudio, PDF, CBZ ou EPUB para renomear, editar legenda, definir capa ou converter.</i>",
         "menu_thumb": "<b>Capa padrão</b>\n<i>Envie uma imagem para salvar como capa padrão ou remova a capa atual.</i>\n\nStatus: {thumb}",
@@ -40,9 +40,10 @@ TEXTS: dict[str, dict[str, str]] = {
         ),
         "maintenance": "<b>Manutenção ativa</b>\n<i>O bot está pausado temporariamente. Tente novamente em breve.</i>",
         "not_admin": "<b>Acesso restrito</b>\n<i>Este painel está disponível apenas para administradores.</i>",
-        "social_disabled": "<b>Links sociais indisponíveis</b>\n<i>Esse tipo de download está desativado neste ambiente.</i>",
+        "social_disabled": "<b>Link não aceito</b>\n<i>Envie um link direto de download.</i>",
+        "direct_link_required": "Este link não está acessível ou não é um link direto de download.",
         "analyzing_link": "<b>Analisando link</b>\n<i>Estou verificando tipo, tamanho e opções disponíveis.</i>",
-        "analyze_failed": "Não consegui analisar esse link com segurança.",
+        "analyze_failed": "Não consegui validar esse link.",
         "social_sending": "<b>Enviando sua mídia</b>\n<i>Assim que concluir, removo este aviso.</i>",
         "quality_card": (
             "<b>Escolha a qualidade</b>\n"
@@ -93,7 +94,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "stage_linking": "<b>Gerando link</b>\n<i>Seu arquivo está sendo preparado para compartilhamento.</i>",
         "done": "<b>Concluído</b>\n<i>Pronto para usar.</i>",
         "link_done": "<b>Link gerado com sucesso</b>\n<i>Seu arquivo já está pronto para compartilhar.</i>\n\n{url}",
-        "error_human": "<b>Não consegui concluir</b>\n{reason}\n\n<i>Você pode tentar novamente ou escolher outra opção.</i>",
+        "error_human": "<b>Não foi possível concluir</b>\n{reason}",
         "expired": "<b>Essa ação expirou</b>\nEnvie o link ou arquivo novamente para continuar.",
         "invalid_name": "<b>Nome inválido</b>\nUse um nome simples, com extensão e sem caracteres proibidos.",
         "unsupported": "<b>Formato não suportado</b>\nEsse arquivo não pode ser usado nessa ação.",

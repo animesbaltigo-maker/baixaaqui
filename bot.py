@@ -539,7 +539,7 @@ def is_public_button_url(value: str) -> bool:
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         return False
     hostname = parsed.hostname.lower()
-    if hostname in {"localhost", "0.0.0.0"} or hostname.endswith(".local"):
+    if hostname in {"localhost", "0.0.0.0", "seu-dominio.com", "example.com"} or hostname.endswith(".local"):
         return False
     try:
         host_ip = ipaddress.ip_address(hostname)
@@ -745,7 +745,7 @@ async def menu_callback(event) -> None:
         sessions.clear(user_id)
         await edit_html(message, tx(language, "menu_title"), buttons=main_menu(language))
     elif action == "download":
-        sessions.set_step(user_id, "await_social_link", {}, language)
+        sessions.set_step(user_id, "await_direct_url", {}, language)
         await edit_html(message, tx(language, "menu_download"), buttons=back_buttons(language))
     elif action == "upload":
         sessions.set_step(user_id, "await_direct_url", {}, language)
@@ -1182,45 +1182,8 @@ async def analyze_link(event, url: str, language: str) -> None:
     url = normalize_shared_url(url)
     try:
         if is_social_url(url):
-            if not settings.social_download_enabled:
-                raise SocialDownloadError(tx(language, "social_disabled"))
             if is_private_chat(event):
-                status = await answer(event, "analyzing_link", language)
-                info = await inspect_social(url)
-                target = remember(
-                    PendingTarget(
-                        token=token(),
-                        user_id=actor_id(event),
-                        chat_id=int(event.chat_id),
-                        source="social",
-                        url=url,
-                        caption=info.description,
-                        social_info=info,
-                        created_at=time.time(),
-                    )
-                )
-                profile = profile_for_social(info)
-                if profile.can_choose_quality and is_youtube_url(url) and not is_youtube_music_url(url):
-                    await edit_html(
-                        status,
-                        tx(language, "quality_card", title=info.title or tx(language, "unknown_title")),
-                        buttons=quality_buttons(language, target),
-                    )
-                    return
-                await edit_html(status, social_card(language, info), buttons=social_buttons(language, target, profile))
-                return
-
-            target = remember(
-                PendingTarget(
-                    token=token(),
-                    user_id=actor_id(event),
-                    chat_id=int(event.chat_id),
-                    source="social:video",
-                    url=url,
-                    created_at=time.time(),
-                )
-            )
-            await schedule_job(event, target, mode="auto", status=None, silent=True, ephemeral=True)
+                await send_html(event.chat_id, tx(language, "direct_link_required"))
             return
 
         if is_drive_url(url):
@@ -1265,8 +1228,8 @@ async def analyze_link(event, url: str, language: str) -> None:
         await edit_html(status, direct_card(language, info), buttons=direct_buttons(language, target, profile_for_direct(info)))
     except Exception as exc:
         if is_private_chat(event):
-            reason = humanize_provider_error(language, exc)
-            text = tx(language, "error_human", reason=f"{tx(language, 'analyze_failed')} {h(reason)}")
+            logger.warning("direct_link_analyze_failed chat_id=%s url=%s reason=%s", event.chat_id, url, exc)
+            text = tx(language, "error_human", reason=tx(language, "direct_link_required"))
             if status:
                 await edit_html(status, text)
             else:
@@ -1441,7 +1404,7 @@ def image_link_cache_key(target: PendingTarget, message) -> str | None:
 
 
 def local_image_link_available() -> bool:
-    return is_public_button_url(settings.public_base_url)
+    return settings.local_link_storage_enabled and is_public_button_url(settings.public_base_url)
 
 
 async def try_fast_image_link(target: PendingTarget, status, language: str, job_id: str) -> FastImageLinkResult | None:
@@ -1931,7 +1894,9 @@ async def send_result(target: PendingTarget, result: DownloadResult, mode: Uploa
     if send_mode == "audio" and not is_audio_filename(result.filename):
         send_mode = "document"
     caption = caption_for_result(target, result)
-    probe_needed = send_mode == "video" or is_video_filename(result.filename)
+    probe_needed = (send_mode == "video" or is_video_filename(result.filename)) and not (
+        settings.turbo_mode and not target.source.startswith("social") and not target.thumb_path
+    )
     info = await media_probe.inspect(result.path) if probe_needed else None
     if send_mode == "video" and target.source.startswith("social") and info and not info.has_audio:
         raise SocialDownloadError(tx(language, "youtube_audio_missing"))
@@ -1963,7 +1928,7 @@ async def send_result(target: PendingTarget, result: DownloadResult, mode: Uploa
     thumb = Path(target.thumb_path) if target.thumb_path else get_default_thumb(target.user_id)
     thumb = await normalize_thumb_path(thumb) if thumb else None
     generated_thumb = None
-    if send_mode in {"video", "document"} and info and info.has_video and not thumb:
+    if send_mode in {"video", "document"} and info and info.has_video and not thumb and not settings.turbo_mode:
         generated_thumb = await media_probe.thumbnail(result.path, result.path.with_suffix(".jpg"))
         thumb = generated_thumb
 

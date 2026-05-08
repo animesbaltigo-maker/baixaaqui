@@ -23,24 +23,68 @@ def human_size(size: int | float | None) -> str:
 def render_progress(label: str, current: int, total: int | None, started_at: float) -> str:
     elapsed = max(time.monotonic() - started_at, 0.001)
     speed = current / elapsed
+    elapsed_text = _format_duration(int(elapsed))
 
     if total:
         ratio = min(max(current / total, 0), 1)
         percent = ratio * 100
-        filled = int(round(ratio * 10))
-        bar = "▪" * filled + "▫" * (10 - filled)
+        filled = int(round(ratio * 12))
+        bar = "#" * filled + "-" * (12 - filled)
         eta = int((total - current) / speed) if speed > 0 and current < total else 0
-        eta_text = f" • ETA {eta}s" if eta else ""
+        eta_text = _format_duration(eta) if eta else "finalizando"
         return (
-            f"{label}: {percent:.2f}%\n"
-            f"[{bar}]\n"
-            f"{human_size(current)} / {human_size(total)} • {human_size(speed)}/s{eta_text}"
+            f"<b>{label}</b>: {percent:.2f}%\n"
+            f"<code>[{bar}]</code>\n"
+            f"Baixado: <code>{human_size(current)} / {human_size(total)}</code>\n"
+            f"Velocidade: <code>{_format_speed(speed)}</code>\n"
+            f"ETA: <code>{eta_text}</code>"
         )
 
+    if current <= 0:
+        return (
+            f"<b>{label}</b>\n"
+            f"<code>[--- conectando ---]</code>\n"
+            f"Status: <code>preparando download</code>\n"
+            f"Baixado: <code>aguardando primeiros bytes</code>\n"
+            f"Tempo: <code>{elapsed_text}</code>"
+        )
+
+    bar = _indeterminate_bar(elapsed)
     return (
-        f"{label}\n"
-        f"{human_size(current)} • {human_size(speed)}/s"
+        f"<b>{label}</b>\n"
+        f"<code>[{bar}]</code>\n"
+        f"Status: <code>baixando, tamanho nao informado</code>\n"
+        f"Baixado: <code>{human_size(current)}</code>\n"
+        f"Velocidade: <code>{_format_speed(speed)}</code>\n"
+        f"Tempo: <code>{elapsed_text}</code>"
     )
+
+
+def _format_speed(speed: float) -> str:
+    if speed <= 1:
+        return "calculando..."
+    return f"{human_size(speed)}/s"
+
+
+def _format_duration(seconds: int) -> str:
+    seconds = max(seconds, 0)
+    minutes, sec = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours:d}h {minutes:02d}m {sec:02d}s"
+    if minutes:
+        return f"{minutes:d}m {sec:02d}s"
+    return f"{sec:d}s"
+
+
+def _indeterminate_bar(elapsed: float) -> str:
+    width = 12
+    block = 3
+    start = int(elapsed) % (width - block + 1)
+    chars = ["-"] * width
+    for index in range(start, start + block):
+        chars[index] = "#"
+    return "".join(chars)
 
 
 ProgressWrapper: TypeAlias = Callable[[str], str]

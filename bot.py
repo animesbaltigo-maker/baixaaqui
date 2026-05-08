@@ -82,6 +82,14 @@ CONTROL_AGENT_ENABLED = os.getenv("CONTROL_AGENT_ENABLED", "0").lower() in {"1",
 CONTROL_BOT_ID = os.getenv("CONTROL_BOT_ID", "baixaaqui")
 CONTROL_BOT_NAME = os.getenv("CONTROL_BOT_NAME", "BaixaAqui_Bot")
 CONTROL_STATE: dict[str, object] = {"broadcast_running": False, "started_at": int(time.time())}
+BALTIGO_UNIVERSE_WEBAPP_URL = os.getenv(
+    "BALTIGO_UNIVERSE_WEBAPP_URL",
+    "https://rough-double-remarkable-north.trycloudflare.com/miniapp/bots/index.html",
+).strip()
+BAIXAAQUI_START_BANNER_URL = os.getenv(
+    "BAIXAAQUI_START_BANNER_URL",
+    "https://photo.chelpbot.me/AgACAgEAAxkBa-wWUmn-ZxC0PcVCR7H0MzIQBWHNBuSmAALgC2sb2U34Rw9ZH6RnNX6PAQADAgADeQADOwQ/photo.jpg",
+).strip()
 
 image_host = TelegraphImageHost()
 media_probe = MediaProbe()
@@ -593,6 +601,7 @@ def main_menu(language: str):
         [Button.inline(tx(language, "btn_menu_tasks"), b"menu:tasks"), Button.inline(tx(language, "btn_menu_settings"), b"menu:settings")],
         [Button.inline(tx(language, "btn_menu_premium"), b"menu:premium")],
         [Button.inline(tx(language, "btn_menu_thumb"), b"menu:thumb"), Button.inline(tx(language, "btn_menu_help"), b"menu:help")],
+        [Button.url("⚔️ Universo Baltigo", BALTIGO_UNIVERSE_WEBAPP_URL)],
     ]
 
 
@@ -909,7 +918,14 @@ async def start_handler(event) -> None:
     language = await language_for(event)
     sender = await event.get_sender()
     name = getattr(sender, "first_name", None) or "tudo bem"
-    await answer(event, "welcome", language, buttons=main_menu(language), name=name)
+    await client.send_file(
+        event.chat_id,
+        BAIXAAQUI_START_BANNER_URL,
+        caption=tx(language, "welcome", name=name),
+        parse_mode="html",
+        buttons=main_menu(language),
+        reply_to=getattr(event.message, "id", None),
+    )
 
 
 @client.on(events.NewMessage(pattern=r"(?i)^/(ajuda|help)(?:@\w+)?$"))

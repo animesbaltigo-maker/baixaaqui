@@ -118,6 +118,13 @@ class PremiumStore:
                     expires_at INTEGER,
                     created_at INTEGER NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS file_id_cache (
+                    url_hash TEXT PRIMARY KEY,
+                    file_id TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    hit_count INTEGER NOT NULL DEFAULT 0
+                );
                 CREATE INDEX IF NOT EXISTS idx_jobs_user_updated ON jobs(user_id, updated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_jobs_user_status ON jobs(user_id, status);
                 CREATE INDEX IF NOT EXISTS idx_links_user_created ON links(user_id, created_at DESC);
@@ -125,6 +132,7 @@ class PremiumStore:
                 CREATE INDEX IF NOT EXISTS idx_cache_expiry ON cache(expires_at);
                 CREATE INDEX IF NOT EXISTS idx_errors_created ON errors(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_file_cache_expiry ON file_cache(expires_at);
+                CREATE INDEX IF NOT EXISTS idx_file_id_cache_created ON file_id_cache(created_at);
                 """
             )
 
@@ -362,6 +370,39 @@ class PremiumStore:
         now = int(time.time())
         with self.connection() as db:
             cursor = db.execute("DELETE FROM cache WHERE expires_at<=?", (now,))
+        return int(cursor.rowcount or 0)
+
+    def file_id_get(self, url_hash: str) -> dict[str, str] | None:
+        with self.connection() as db:
+            row = db.execute("SELECT file_id, mode FROM file_id_cache WHERE url_hash=?", (url_hash,)).fetchone()
+            if not row:
+                return None
+            db.execute("UPDATE file_id_cache SET hit_count=hit_count+1 WHERE url_hash=?", (url_hash,))
+        return {"file_id": str(row["file_id"]), "mode": str(row["mode"])}
+
+    def file_id_set(self, url_hash: str, file_id: str, mode: str) -> None:
+        now = int(time.time())
+        with self.connection() as db:
+            db.execute(
+                """
+                INSERT INTO file_id_cache(url_hash, file_id, mode, created_at, hit_count)
+                VALUES(?, ?, ?, ?, 0)
+                ON CONFLICT(url_hash) DO UPDATE SET
+                    file_id=excluded.file_id,
+                    mode=excluded.mode,
+                    created_at=excluded.created_at
+                """,
+                (url_hash, file_id, mode, now),
+            )
+
+    def file_id_delete(self, url_hash: str) -> None:
+        with self.connection() as db:
+            db.execute("DELETE FROM file_id_cache WHERE url_hash=?", (url_hash,))
+
+    def file_id_cleanup(self, max_age_days: int = 30) -> int:
+        cutoff = int(time.time()) - max_age_days * 86400
+        with self.connection() as db:
+            cursor = db.execute("DELETE FROM file_id_cache WHERE created_at<?", (cutoff,))
         return int(cursor.rowcount or 0)
 
     def cleanup_expired_links(self) -> list[str]:

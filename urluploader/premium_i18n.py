@@ -549,6 +549,11 @@ TEXTS["es"].update(
 
 TEXTS["pt"].update(
     {
+        "stage_preparing": "<b>Preparando</b>\n<i>Validando a rota mais rapida antes de baixar.</i>",
+        "stage_downloading": "<b>Baixando</b>\n\n{progress}",
+        "stage_uploading": "<b>Enviando</b>\n\n{progress}",
+        "drive_disabled": "Google Drive esta desativado neste servidor.",
+        "drive_public_only": "Google Drive esta em modo publico. Envie um link compartilhado como qualquer pessoa com o link.",
         "auth_required": "Esse conteudo exige login/cookies validos. O admin pode configurar cookies fixos no .env.",
         "platform_blocked": "A plataforma bloqueou temporariamente este servidor. Tente novamente mais tarde ou configure cookies na VPS.",
         "download_timeout": "A plataforma demorou demais para responder. Interrompi a tarefa para manter o bot estavel.",
@@ -560,6 +565,11 @@ TEXTS["pt"].update(
 
 TEXTS["en"].update(
     {
+        "stage_preparing": "<b>Preparing</b>\n<i>Checking the fastest route before downloading.</i>",
+        "stage_downloading": "<b>Downloading</b>\n\n{progress}",
+        "stage_uploading": "<b>Uploading</b>\n\n{progress}",
+        "drive_disabled": "Google Drive is disabled on this server.",
+        "drive_public_only": "Google Drive is in public-only mode. Send a link shared with anyone who has the link.",
         "auth_required": "This content requires valid login/cookies. The admin can configure fixed cookies in .env.",
         "platform_blocked": "The platform temporarily blocked this server. Try again later or configure cookies on the VPS.",
         "download_timeout": "The platform took too long to respond. I stopped the task to keep the bot stable.",
@@ -571,6 +581,11 @@ TEXTS["en"].update(
 
 TEXTS["es"].update(
     {
+        "stage_preparing": "<b>Preparando</b>\n<i>Validando la ruta mas rapida antes de descargar.</i>",
+        "stage_downloading": "<b>Descargando</b>\n\n{progress}",
+        "stage_uploading": "<b>Subiendo</b>\n\n{progress}",
+        "drive_disabled": "Google Drive esta desactivado en este servidor.",
+        "drive_public_only": "Google Drive esta en modo publico. Envia un enlace compartido con cualquier persona que tenga el enlace.",
         "auth_required": "Este contenido requiere login/cookies validas. El admin puede configurar cookies fijas en .env.",
         "platform_blocked": "La plataforma bloqueo temporalmente este servidor. Intentalo mas tarde o configura cookies en la VPS.",
         "download_timeout": "La plataforma tardo demasiado en responder. Detuve la tarea para mantener estable el bot.",
@@ -595,5 +610,5 @@ def normalize_language(language: str | None, fallback: str = "pt") -> str:
 
 def tx(language: str, key: str, **values: object) -> str:
     text = TEXTS.get(normalize_language(language), TEXTS["pt"]).get(key, TEXTS["pt"].get(key, key))
-    safe_values = {name: h(value) for name, value in values.items()}
+    safe_values = {name: ("" if value is None else str(value)) if name == "progress" else h(value) for name, value in values.items()}
     return text.format(**safe_values)

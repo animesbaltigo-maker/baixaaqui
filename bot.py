@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import io
 import hashlib
 import ipaddress
 import json
 import logging
 import mimetypes
+import os
 import re
 import shutil
 import tempfile
@@ -73,6 +76,13 @@ store = PremiumStore(settings.data_dir / "premium.sqlite3")
 sessions = SessionManager(settings.session_ttl_seconds)
 rate_limiter = RateLimiter(settings.rate_limit_window_seconds, settings.rate_limit_max_events)
 link_storage = LocalLinkStorage(settings.public_files_dir, settings.public_base_url, settings.default_link_ttl_hours)
+
+CONTROL_SECRET = os.getenv("CONTROL_SECRET", "")
+CONTROL_AGENT_ENABLED = os.getenv("CONTROL_AGENT_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
+CONTROL_BOT_ID = os.getenv("CONTROL_BOT_ID", "baixaaqui")
+CONTROL_BOT_NAME = os.getenv("CONTROL_BOT_NAME", "BaixaAqui_Bot")
+CONTROL_STATE: dict[str, object] = {"broadcast_running": False, "started_at": int(time.time())}
+
 image_host = TelegraphImageHost()
 media_probe = MediaProbe()
 remote_downloader = RemoteDownloader(
@@ -397,6 +407,148 @@ def remember(target: PendingTarget) -> PendingTarget:
         pending_targets.popitem(last=False)
     return target
 
+
+
+def control_authorized(request) -> bool:
+    return bool(CONTROL_SECRET) and request.headers.get("X-Control-Secret") == CONTROL_SECRET
+
+
+def user_blocked(user_id: int) -> bool:
+    with store.connection() as db:
+        row = db.execute("SELECT is_blocked FROM users WHERE user_id=?", (int(user_id),)).fetchone()
+    return bool(row and int(row["is_blocked"] or 0) == 1)
+
+
+async def control_block_guard(event) -> None:
+    user_id = actor_id(event)
+    if is_admin(user_id) or not user_blocked(user_id):
+        return
+    await event.respond(
+        "?? <b>Acesso bloqueado</b>\n\n"
+        "Voc? foi bloqueado de usar este bot.\n"
+        "Se acredita que isso foi um erro, entre em contato com o suporte.",
+        parse_mode="html",
+    )
+    raise events.StopPropagation
+
+
+def control_buttons(rows):
+    built = []
+    for row in rows or []:
+        line = []
+        for button in row:
+            text = str(button.get("text") or "Bot?o")[:64]
+            value = str(button.get("value") or button.get("url") or "")
+            if value.startswith("t.me/"):
+                value = "https://" + value
+            if value.startswith(("http://", "https://", "tg://")):
+                line.append(Button.url(text, value))
+        if line:
+            built.append(line)
+    return built or None
+
+
+def control_media(payload):
+    media = payload.get("media") if isinstance(payload, dict) else None
+    if not isinstance(media, dict) or not media.get("data"):
+        return None
+    try:
+        raw = base64.b64decode(str(media.get("data") or ""))
+    except Exception:
+        return None
+    file_obj = io.BytesIO(raw)
+    file_obj.name = str(media.get("filename") or "broadcast.bin")
+    return file_obj
+
+
+async def control_send_one(user_id: int, payload: dict) -> tuple[bool, bool]:
+    text = str(payload.get("text") or "").strip()
+    buttons = control_buttons(payload.get("button_rows") if isinstance(payload.get("button_rows"), list) else [])
+    media_file = control_media(payload)
+    try:
+        if media_file:
+            sent = await client.send_file(user_id, media_file, caption=text or None, parse_mode="html", buttons=buttons)
+        else:
+            sent = await client.send_message(user_id, text or "??", parse_mode="html", buttons=buttons, link_preview=False)
+        if payload.get("pin") and sent:
+            try:
+                await client.pin_message(user_id, sent, notify=False)
+            except Exception:
+                pass
+        return True, False
+    except FloodWaitError as exc:
+        await asyncio.sleep(min(int(exc.seconds), 60))
+        return False, False
+    except Exception as exc:
+        lowered = str(exc).lower()
+        return False, any(part in lowered for part in ("blocked", "user is deactivated", "chat not found", "forbidden"))
+
+
+async def control_broadcast_task(payload: dict) -> None:
+    CONTROL_STATE["broadcast_running"] = True
+    counters = {"sent": 0, "failed": 0, "removed": 0, "total": 0, "started_at": int(time.time())}
+    CONTROL_STATE["last_broadcast"] = counters
+    try:
+        users = broadcast_user_ids()
+        counters["total"] = len(users)
+        for user_id in users:
+            ok, should_remove = await control_send_one(int(user_id), payload)
+            if ok:
+                counters["sent"] += 1
+            else:
+                counters["failed"] += 1
+                if should_remove:
+                    broadcast_remove_user(int(user_id))
+                    counters["removed"] += 1
+            await asyncio.sleep(BROADCAST_DELAY)
+    finally:
+        counters["finished_at"] = int(time.time())
+        CONTROL_STATE["broadcast_running"] = False
+
+
+async def control_health(request):
+    if not control_authorized(request):
+        return web.json_response({"ok": False, "error": "unauthorized"}, status=401)
+    try:
+        me = await client.get_me()
+        username = getattr(me, "username", None) or CONTROL_BOT_NAME
+    except Exception:
+        username = CONTROL_BOT_NAME
+    return web.json_response({"ok": True, "bot_id": CONTROL_BOT_ID, "name": CONTROL_BOT_NAME, "username": username, "online": True, "broadcast_running": bool(CONTROL_STATE.get("broadcast_running")), "uptime_seconds": int(time.time()) - int(CONTROL_STATE.get("started_at", time.time()))})
+
+
+async def control_metrics(request):
+    if not control_authorized(request):
+        return web.json_response({"ok": False, "error": "unauthorized"}, status=401)
+    with store.connection() as db:
+        active = int(db.execute("SELECT COUNT(*) FROM users WHERE is_blocked=0").fetchone()[0] or 0)
+        banned = int(db.execute("SELECT COUNT(*) FROM users WHERE is_blocked=1").fetchone()[0] or 0)
+    return web.json_response({"ok": True, "bot_id": CONTROL_BOT_ID, "name": CONTROL_BOT_NAME, "users_active": active, "users_inactive": 0, "users_banned": banned, "admins": len(settings.admin_ids), "broadcast_running": bool(CONTROL_STATE.get("broadcast_running")), "last_broadcast": CONTROL_STATE.get("last_broadcast") or {}})
+
+
+async def control_block(request):
+    if not control_authorized(request):
+        return web.json_response({"ok": False, "error": "unauthorized"}, status=401)
+    payload = await request.json()
+    user_id = int(payload.get("user_id") or 0)
+    if user_id <= 0:
+        return web.json_response({"ok": False, "error": "invalid_user_id"}, status=400)
+    now = int(time.time())
+    with store.connection() as db:
+        db.execute("INSERT INTO users(user_id, created_at, updated_at, is_blocked) VALUES(?, ?, ?, 1) ON CONFLICT(user_id) DO UPDATE SET is_blocked=1, updated_at=excluded.updated_at", (user_id, now, now))
+    return web.json_response({"ok": True, "user_id": user_id, "blocked": True})
+
+
+async def control_broadcast(request):
+    if not control_authorized(request):
+        return web.json_response({"ok": False, "error": "unauthorized"}, status=401)
+    payload = await request.json()
+    if CONTROL_STATE.get("broadcast_running"):
+        return web.json_response({"ok": False, "error": "broadcast_running"}, status=409)
+    if not str(payload.get("text") or "").strip() and not isinstance(payload.get("media"), dict):
+        return web.json_response({"ok": False, "error": "empty_broadcast"}, status=400)
+    asyncio.create_task(control_broadcast_task(payload))
+    return web.json_response({"ok": True, "started": True, "target_users": broadcast_total_users()})
 
 def get_target(token_value: str, user_id: int) -> PendingTarget | None:
     target = pending_targets.get(token_value)
@@ -745,6 +897,11 @@ def cancel_tasks_for_target(target_token: str) -> int:
                 task.cancel()
                 cancelled += 1
     return cancelled
+
+
+@client.on(events.NewMessage(incoming=True))
+async def control_block_guard_handler(event) -> None:
+    await control_block_guard(event)
 
 
 @client.on(events.NewMessage(pattern=r"(?i)^/(start|iniciar)(?:@\w+)?$"))
@@ -3142,8 +3299,10 @@ def purge_ephemeral_media() -> None:
 
 
 async def start_link_server() -> None:
-    if not settings.link_server_enabled:
+    if not settings.link_server_enabled and not CONTROL_AGENT_ENABLED:
         return
+    if CONTROL_AGENT_ENABLED and not CONTROL_SECRET:
+        raise RuntimeError("CONTROL_SECRET precisa estar configurado para ativar o control agent.")
     app = web.Application()
     async def health(_request):
         return web.json_response(
@@ -3155,7 +3314,12 @@ async def start_link_server() -> None:
             }
         )
     app.router.add_get("/health", health)
-    app.router.add_static("/files", settings.public_files_dir, show_index=False)
+    app.router.add_get("/control/health", control_health)
+    app.router.add_get("/control/metrics", control_metrics)
+    app.router.add_post("/control/block", control_block)
+    app.router.add_post("/control/broadcast", control_broadcast)
+    if settings.link_server_enabled:
+        app.router.add_static("/files", settings.public_files_dir, show_index=False)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, settings.link_server_host, settings.link_server_port)

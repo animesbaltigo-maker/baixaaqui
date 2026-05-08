@@ -1050,74 +1050,48 @@ def broadcast_menu_text(data: dict[str, object], *, note: str | None = None) -> 
     has_text = bool(str(data.get("text") or "").strip())
     pin = bool(data.get("pin"))
     status = "Broadcast em andamento" if BROADCAST_RUNNING else "Parado"
-    lines = [
-        "ðŸ“¬ <b>Painel de transmissÃ£o</b>",
-        "",
-        f"âšªï¸ <b>Status:</b> <code>{h(status)}</code>",
-        "<i>Monte, teste, agende e acompanhe seus envios com seguranÃ§a.</i>",
-        "",
-    ]
+    lines = ["\U0001f4e3 <b>Painel de transmiss\u00e3o</b>", "", f"\u26aa\ufe0f <b>Status do sistema:</b> <code>{h(status)}</code>", "", "Configure e envie uma mensagem para os usu\u00e1rios do bot.", ""]
     if note:
         lines.extend([f"<blockquote>{note}</blockquote>", ""])
-    details = [f"<b>Destino:</b> <code>{h(broadcast_mode_label(mode))}</code>"]
+    details = [
+        f"\U0001f30d <b>Destino:</b> <code>{h(broadcast_mode_label(mode))}</code>",
+        f"\U0001f5bc\ufe0f <b>M\u00eddia:</b> <code>{broadcast_yes_no(has_media)}</code>",
+        f"\U0001f520 <b>Texto:</b> <code>{broadcast_yes_no(has_text)}</code>",
+        f"\u2328\ufe0f <b>Bot\u00f5es:</b> <code>{broadcast_button_count(data)}</code>",
+        f"\U0001f4cc <b>Fixar:</b> <code>{broadcast_yes_no(pin)}</code>",
+    ]
     if mode == "single" and target_user_id:
-        details.append(f"<b>ID alvo:</b> <code>{h(target_user_id)}</code>")
-    details.extend(
-        [
-            f"<b>MÃ­dia:</b> <code>{broadcast_yes_no(has_media)}</code>",
-            f"<b>Texto:</b> <code>{broadcast_yes_no(has_text)}</code>",
-            f"<b>BotÃµes:</b> <code>{broadcast_button_count(data)}</code>",
-            f"<b>Fixar:</b> <code>{broadcast_yes_no(pin)}</code>",
-            f"<b>Agendado:</b> <code>{h(broadcast_schedule_label(data))}</code>",
-            f"<b>UsuÃ¡rios salvos:</b> <code>{broadcast_total_users()}</code>",
-        ]
-    )
+        details.insert(1, f"\U0001f194 <b>ID alvo:</b> <code>{h(target_user_id)}</code>")
     lines.append("<blockquote>" + "\n".join(details) + "</blockquote>")
-    lines.extend(["", "Escolha uma opÃ§Ã£o abaixo."])
+    lines.extend(["", f"<blockquote>\U0001f465 <b>Total salvo no bot:</b> <code>{broadcast_total_users()}</code></blockquote>", "", "<i>Escolha uma op\u00e7\u00e3o abaixo.</i>"])
     return "\n".join(lines)
 
-
 def broadcast_menu_buttons(data: dict[str, object]):
-    mode = data.get("mode")
-    mode_label = "ðŸŒ Todos" if mode == "all" else "ðŸ‘¤ UsuÃ¡rio" if mode == "single" else "ðŸŽ¯ Destino"
-    send_label = "â³ Rodando" if BROADCAST_RUNNING else "ðŸš€ Enviar"
+    pin_label = "\u2705 Sim" if bool(data.get("pin")) else "\u274c N\u00e3o"
     return [
-        [Button.inline(mode_label, b"bc:set_mode"), Button.inline("ðŸ–¼ MÃ­dia", b"bc:set_media")],
-        [Button.inline("ðŸ“ Mensagem", b"bc:set_text"), Button.inline(f"ðŸ”˜ BotÃµes ({broadcast_button_count(data)})", b"bc:set_buttons")],
-        [Button.inline("ðŸ§ª Enviar teste", b"bc:test_send"), Button.inline("ðŸ—“ Agendar", b"bc:schedule")],
-        [Button.inline("ðŸ’¾ Salvar modelo", b"bc:save_template"), Button.inline("ðŸ“š Usar modelo", b"bc:use_template")],
-        [Button.inline(f"ðŸ“Œ {broadcast_yes_no(bool(data.get('pin')))}", b"bc:toggle_pin"), Button.inline("ðŸ‘€ PrÃ©via", b"bc:preview")],
-        [Button.inline(send_label, b"bc:send"), Button.inline("ðŸ—‘ Limpar", b"bc:reset")],
-        [Button.inline("âŒ Fechar", b"bc:close")],
+        [Button.inline("\U0001f30d Destino", b"bc:set_mode")],
+        [Button.inline("\U0001f5bc\ufe0f M\u00eddia", b"bc:set_media"), Button.inline("\U0001f440 Ver", b"bc:view_media")],
+        [Button.inline("\U0001f520 Texto", b"bc:set_text"), Button.inline("\U0001f440 Ver", b"bc:view_text")],
+        [Button.inline("\u2328\ufe0f Bot\u00f5es", b"bc:set_buttons"), Button.inline("\U0001f440 Ver", b"bc:view_buttons")],
+        [Button.inline("\U0001f4cc Fixar", b"bc:toggle_pin"), Button.inline(pin_label, b"bc:toggle_pin")],
+        [Button.inline("\U0001f440 Visualiza\u00e7\u00e3o completa", b"bc:full_preview")],
+        [Button.inline("\U0001f519 Voltar", b"bc:close"), Button.inline("Pr\u00f3ximo \u27a1\ufe0f", b"bc:next")],
     ]
-
 
 def broadcast_running_buttons():
-    first = Button.inline("â–¶ï¸ Continuar", b"bc:resume") if BROADCAST_CONTROL.get("paused") else Button.inline("â¸ Pausar", b"bc:pause")
-    return [[first, Button.inline("ðŸ›‘ Cancelar", b"bc:cancel_running")]]
-
+    first = Button.inline("\u25b6\ufe0f Continuar", b"bc:resume") if BROADCAST_CONTROL.get("paused") else Button.inline("\u23f8 Pausar", b"bc:pause")
+    return [[first, Button.inline("\U0001f6d1 Cancelar", b"bc:cancel_running")]]
 
 def broadcast_mode_buttons():
-    return [
-        [Button.inline("ðŸŒ Todos", b"bc:mode_all")],
-        [Button.inline("ðŸ‘¤ UsuÃ¡rio especÃ­fico", b"bc:mode_single")],
-        [Button.inline("ðŸ”™ Voltar", b"bc:menu")],
-    ]
-
+    return [[Button.inline("\U0001f30d Todos", b"bc:mode_all")], [Button.inline("\U0001f464 Usu\u00e1rio espec\u00edfico", b"bc:mode_single")], [Button.inline("\U0001f519 Voltar", b"bc:menu")]]
 
 def broadcast_prompt_buttons(remove_action: str | None = None):
     rows = []
     if remove_action:
-        labels = {
-            "remove_media": "ðŸ—‘ Remover mÃ­dia",
-            "remove_text": "ðŸ—‘ Remover texto",
-            "remove_buttons": "ðŸ—‘ Remover botÃµes",
-            "remove_schedule": "ðŸ—‘ Remover agendamento",
-        }
-        rows.append([Button.inline(labels.get(remove_action, "ðŸ—‘ Remover"), f"bc:{remove_action}".encode())])
-    rows.append([Button.inline("ðŸ”™ Voltar", b"bc:menu")])
+        labels = {"remove_media": "\U0001f5d1 Remover m\u00eddia", "remove_text": "\U0001f5d1 Remover texto", "remove_buttons": "\U0001f5d1 Remover bot\u00f5es", "remove_schedule": "\U0001f5d1 Remover agendamento"}
+        rows.append([Button.inline(labels.get(remove_action, "\U0001f5d1 Remover"), f"bc:{remove_action}".encode())])
+    rows.append([Button.inline("\U0001f519 Voltar", b"bc:menu")])
     return rows
-
 
 def broadcast_templates_buttons(templates: list[dict[str, object]]):
     rows = []
@@ -1125,6 +1099,25 @@ def broadcast_templates_buttons(templates: list[dict[str, object]]):
         rows.append([Button.inline(f"ðŸ“Œ {str(template.get('name') or f'Modelo {index + 1}')[:32]}", f"bc:load_template:{index}".encode())])
     rows.append([Button.inline("ðŸ”™ Voltar", b"bc:menu")])
     return rows
+
+
+def broadcast_buttons_summary(data: dict[str, object]) -> str:
+    rows = data.get("button_rows") if isinstance(data.get("button_rows"), list) else []
+    if not rows:
+        return "Nenhum bot\u00e3o configurado."
+    lines = []
+    for row in rows:
+        parts = []
+        for button in row:
+            text = h(str(button.get("text") or "Bot\u00e3o"))
+            value = h(str(button.get("url") or button.get("data") or ""))
+            parts.append(f"<b>{text}</b> - <code>{value}</code>" if value else f"<b>{text}</b>")
+        lines.append(" && ".join(parts))
+    return "\n".join(lines)
+
+
+def broadcast_view_text(title: str, body: str) -> str:
+    return f"{title}\n\n<blockquote>{body}</blockquote>"
 
 
 def broadcast_preview_text(data: dict[str, object]) -> str:
@@ -1144,16 +1137,10 @@ def broadcast_preview_text(data: dict[str, object]) -> str:
 
 
 def broadcast_preview_buttons():
-    return [
-        [Button.inline("ðŸ§ª Enviar teste", b"bc:test_send")],
-        [Button.inline("ðŸš€ Confirmar envio", b"bc:send")],
-        [Button.inline("ðŸ”™ Voltar", b"bc:menu")],
-    ]
-
+    return [[Button.inline("\U0001f9ea Enviar teste", b"bc:test_send")], [Button.inline("Pr\u00f3ximo \u27a1\ufe0f", b"bc:next")], [Button.inline("\U0001f519 Voltar", b"bc:menu")]]
 
 def broadcast_confirm_buttons():
-    return [[Button.inline("âŒ NÃƒO", b"bc:menu"), Button.inline("âœ… SIM", b"bc:confirm_send")]]
-
+    return [[Button.inline("\u274c Cancelar", b"bc:menu"), Button.inline("\u2705 Confirmar", b"bc:confirm_send")], [Button.inline("\U0001f5d3 Agendar", b"bc:schedule")]]
 
 async def broadcast_remember_panel(admin_id: int, message) -> None:
     data = broadcast_data(admin_id)
@@ -1399,7 +1386,7 @@ async def broadcast_callback(event) -> None:
         await broadcast_show_menu(admin_id, chat_id)
     elif action == "set_mode":
         data["step"] = ""
-        await edit_html(message, "ðŸŽ¯ <b>Escolha o destino</b>\n\n<i>Toque em uma das opÃ§Ãµes abaixo.</i>", buttons=broadcast_mode_buttons())
+        await edit_html(message, "\U0001f3af <b>Escolha o destino</b>\n\n<i>Toque em uma das op\u00e7\u00f5es abaixo.</i>", buttons=broadcast_mode_buttons())
     elif action == "mode_all":
         data["mode"] = "all"
         data["target_user_id"] = None
@@ -1407,19 +1394,19 @@ async def broadcast_callback(event) -> None:
     elif action == "mode_single":
         data["mode"] = "single"
         data["step"] = "awaiting_target_user_id"
-        await edit_html(message, "ðŸ‘¤ <b>Envie o ID do usuÃ¡rio</b>\n\n<i>O prÃ³ximo texto enviado serÃ¡ usado como destino.</i>", buttons=broadcast_prompt_buttons())
+        await edit_html(message, "\U0001f464 <b>Envie o ID do usu\u00e1rio</b>\n\n<i>O pr\u00f3ximo texto enviado ser\u00e1 usado como destino.</i>", buttons=broadcast_prompt_buttons())
     elif action == "set_media":
         data["step"] = "awaiting_media"
-        await edit_html(message, "ðŸ–¼ <b>Envie a mÃ­dia da publicaÃ§Ã£o!</b>\n<i>Tipos permitidos: fotos, vÃ­deos, arquivos, figurinhas, GIFs, Ã¡udio, mensagens de voz e vÃ­deos redondos.</i>", buttons=broadcast_prompt_buttons("remove_media"))
+        await edit_html(message, "\U0001f5bc\ufe0f <b>Envie a m\u00eddia da publica\u00e7\u00e3o!</b>\n<i>Tipos permitidos: fotos, v\u00eddeos, arquivos, figurinhas, GIFs, \u00e1udio, mensagens de voz e v\u00eddeos redondos.</i>", buttons=broadcast_prompt_buttons("remove_media"))
     elif action == "set_text":
         data["step"] = "awaiting_text"
-        await edit_html(message, "ðŸ“ <b>Envie a mensagem da postagem</b>\n<i>VocÃª pode usar negrito, itÃ¡lico e links feitos pelo prÃ³prio Telegram. HTML simples tambÃ©m funciona.</i>\n\nâ€¢ <b>Nome:</b> <code>%firstname%</code>\nâ€¢ <b>UsuÃ¡rio:</b> <code>%username%</code>", buttons=broadcast_prompt_buttons("remove_text"))
+        await edit_html(message, "\U0001f520 <b>Envie a mensagem da postagem</b>\n<i>Voc\u00ea pode usar negrito, it\u00e1lico e links feitos pelo pr\u00f3prio Telegram. HTML simples tamb\u00e9m funciona.</i>\n\n\u2022 <b>Nome:</b> <code>%firstname%</code>\n\u2022 <b>Usu\u00e1rio:</b> <code>%username%</code>", buttons=broadcast_prompt_buttons("remove_text"))
     elif action == "set_buttons":
         data["step"] = "awaiting_buttons"
-        await edit_html(message, "ðŸ”˜ <b>Defina os botÃµes da postagem</b>\n\n<blockquote>Texto do botÃ£o - https://t.me/Exemplo\nOutro botÃ£o - https://site.com</blockquote>\n\n<blockquote>Site - https://site.com && Canal - https://t.me/canal</blockquote>\n\n<blockquote>Aviso - popup:Texto do popup\nCompartilhar - share:Texto para compartilhar</blockquote>", buttons=broadcast_prompt_buttons("remove_buttons"))
+        await edit_html(message, "\u2328\ufe0f <b>Defina os bot\u00f5es da postagem</b>\n\n<blockquote>Texto do bot\u00e3o - https://t.me/Exemplo\nOutro bot\u00e3o - https://site.com</blockquote>\n\n<blockquote>Site - https://site.com && Canal - https://t.me/canal</blockquote>\n\n<blockquote>Aviso - popup:Texto do popup\nCompartilhar - share:Texto para compartilhar</blockquote>", buttons=broadcast_prompt_buttons("remove_buttons"))
     elif action == "schedule":
         data["step"] = "awaiting_schedule"
-        await edit_html(message, "ðŸ—“ <b>Agendar transmissÃ£o</b>\n\n<i>Envie o horÃ¡rio desejado.</i>\n\n<blockquote>20:00\nhoje 20:00\namanhÃ£ 12:00\n25/12/2026 08:30</blockquote>", buttons=broadcast_prompt_buttons("remove_schedule"))
+        await edit_html(message, "\U0001f5d3 <b>Agendar transmiss\u00e3o</b>\n\n<i>Envie o hor\u00e1rio desejado.</i>\n\n<blockquote>20:00\nhoje 20:00\namanh\u00e3 12:00\n25/12/2026 08:30</blockquote>", buttons=broadcast_prompt_buttons("remove_schedule"))
     elif action == "save_template":
         if not broadcast_ready(data):
             await event.answer("Defina texto ou mÃ­dia antes de salvar.", alert=True)
@@ -1458,14 +1445,38 @@ async def broadcast_callback(event) -> None:
         data["pin"] = not bool(data.get("pin"))
         data["confirm_pin"] = False
         await broadcast_show_menu(admin_id, chat_id, note="Fixar ativado. HaverÃ¡ trava automÃ¡tica para listas grandes." if data["pin"] else "Fixar desativado.")
-    elif action == "preview":
-        await edit_html(message, broadcast_preview_text(data), buttons=broadcast_preview_buttons())
+    elif action == "view_media":
+        body = "M\u00eddia configurada." if bool(data.get("media_message_id")) else "Nenhuma m\u00eddia configurada."
+        await edit_html(message, broadcast_view_text("\U0001f5bc\ufe0f <b>M\u00eddia</b>", body), buttons=broadcast_prompt_buttons())
+    elif action == "view_text":
+        body = str(data.get("text") or "").strip() or "Nenhum texto configurado."
+        await edit_html(message, broadcast_view_text("\U0001f520 <b>Texto</b>", body), buttons=broadcast_prompt_buttons())
+    elif action == "view_buttons":
+        await edit_html(message, broadcast_view_text("\u2328\ufe0f <b>Bot\u00f5es</b>", broadcast_buttons_summary(data)), buttons=broadcast_prompt_buttons())
+    elif action in {"preview", "full_preview"}:
+        _, note = await broadcast_send_test(admin_id, data)
+        await broadcast_show_menu(admin_id, chat_id, note=note)
     elif action == "test_send":
         _, note = await broadcast_send_test(admin_id, data)
         await broadcast_show_menu(admin_id, chat_id, note=note)
-    elif action == "send":
+    elif action in {"send", "next"}:
+        if not broadcast_ready(data):
+            await event.answer("Defina texto ou m\u00eddia antes de continuar.", alert=True)
+            return
         total = 1 if data.get("mode") == "single" else broadcast_total_users()
-        await edit_html(message, f"ðŸ“¬ <b>TransmissÃ£o</b>\n\nVocÃª tem certeza que quer enviar para <code>{total}</code> usuÃ¡rio(s)?\n\n<blockquote>MÃ­dia: <b>{broadcast_yes_no(bool(data.get('media_message_id')))}</b>\nBotÃµes: <b>{broadcast_button_count(data)}</b>\nFixar: <b>{broadcast_yes_no(bool(data.get('pin')))}</b>\nAgendado: <b>{h(broadcast_schedule_label(data))}</b></blockquote>", buttons=broadcast_confirm_buttons())
+        await broadcast_send_test(admin_id, data)
+        await edit_html(
+            message,
+            "\U0001f4ec <b>Confirma\u00e7\u00e3o</b>\n\n"
+            "A mensagem acima foi enviada para voc\u00ea como pr\u00e9via. Confirme, cancele ou agende o envio.\n\n"
+            f"<blockquote>Destino: <b>{h(broadcast_mode_label(data.get('mode')))}</b>\n"
+            f"Usu\u00e1rios: <b>{total}</b>\n"
+            f"M\u00eddia: <b>{broadcast_yes_no(bool(data.get('media_message_id')))}</b>\n"
+            f"Bot\u00f5es: <b>{broadcast_button_count(data)}</b>\n"
+            f"Fixar: <b>{broadcast_yes_no(bool(data.get('pin')))}</b>\n"
+            f"Agendado: <b>{h(broadcast_schedule_label(data))}</b></blockquote>",
+            buttons=broadcast_confirm_buttons(),
+        )
     elif action == "confirm_send":
         await broadcast_start_send(event, data, message)
 

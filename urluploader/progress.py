@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import TypeAlias
 
@@ -20,9 +21,17 @@ def human_size(size: int | float | None) -> str:
     return f"{amount:.1f} TB"
 
 
-def render_progress(label: str, current: int, total: int | None, started_at: float) -> str:
+def render_progress(
+    label: str,
+    current: int,
+    total: int | None,
+    started_at: float,
+    *,
+    current_speed: float | None = None,
+) -> str:
     elapsed = max(time.monotonic() - started_at, 0.001)
-    speed = current / elapsed
+    average_speed = current / elapsed
+    display_speed = current_speed if current_speed and current_speed > 0 else average_speed
     elapsed_text = _format_duration(int(elapsed))
 
     if total:
@@ -30,13 +39,14 @@ def render_progress(label: str, current: int, total: int | None, started_at: flo
         percent = ratio * 100
         filled = int(round(ratio * 12))
         bar = "#" * filled + "-" * (12 - filled)
-        eta = int((total - current) / speed) if speed > 0 and current < total else 0
+        eta = int((total - current) / display_speed) if display_speed > 0 and current < total else 0
         eta_text = _format_duration(eta) if eta else "finalizando"
         return (
             f"<b>{label}</b>: {percent:.2f}%\n"
             f"<code>[{bar}]</code>\n"
             f"Baixado: <code>{human_size(current)} / {human_size(total)}</code>\n"
-            f"Velocidade: <code>{_format_speed(speed)}</code>\n"
+            f"Velocidade: <code>{_format_speed(display_speed)}</code>\n"
+            f"Media: <code>{_format_speed(average_speed)}</code>\n"
             f"ETA: <code>{eta_text}</code>"
         )
 
@@ -55,7 +65,8 @@ def render_progress(label: str, current: int, total: int | None, started_at: flo
         f"<code>[{bar}]</code>\n"
         f"Status: <code>baixando, tamanho nao informado</code>\n"
         f"Baixado: <code>{human_size(current)}</code>\n"
-        f"Velocidade: <code>{_format_speed(speed)}</code>\n"
+        f"Velocidade: <code>{_format_speed(display_speed)}</code>\n"
+        f"Media: <code>{_format_speed(average_speed)}</code>\n"
         f"Tempo: <code>{elapsed_text}</code>"
     )
 
@@ -90,6 +101,23 @@ def _indeterminate_bar(elapsed: float) -> str:
 ProgressWrapper: TypeAlias = Callable[[str], str]
 
 
+class SpeedMeter:
+    def __init__(self, window_seconds: float = 5.0) -> None:
+        self.window_seconds = max(window_seconds, 1.0)
+        self.samples: deque[tuple[float, int]] = deque()
+
+    def update(self, current: int) -> float:
+        now = time.monotonic()
+        self.samples.append((now, current))
+        while len(self.samples) > 1 and self.samples[0][0] < now - self.window_seconds:
+            self.samples.popleft()
+        if len(self.samples) < 2:
+            return 0.0
+        oldest_time, oldest_bytes = self.samples[0]
+        newest_time, newest_bytes = self.samples[-1]
+        return (newest_bytes - oldest_bytes) / max(newest_time - oldest_time, 0.001)
+
+
 class ProgressEditor:
     def __init__(
         self,
@@ -112,6 +140,7 @@ class ProgressEditor:
         self._last_percent = -1
         self._loop = asyncio.get_running_loop()
         self._pending_task: asyncio.Task[None] | None = None
+        self._speed_meter = SpeedMeter()
 
     async def update(self, current: int, total: int | None) -> None:
         if self.message is None:
@@ -133,7 +162,8 @@ class ProgressEditor:
 
         self._last_edit = now
         self._last_percent = percent_bucket
-        text = render_progress(self.label, current, total, self.started_at)
+        current_speed = self._speed_meter.update(current)
+        text = render_progress(self.label, current, total, self.started_at, current_speed=current_speed)
         if self.wrapper:
             text = self.wrapper(text)
         try:

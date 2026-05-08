@@ -70,7 +70,14 @@ rate_limiter = RateLimiter(settings.rate_limit_window_seconds, settings.rate_lim
 link_storage = LocalLinkStorage(settings.public_files_dir, settings.public_base_url, settings.default_link_ttl_hours)
 image_host = TelegraphImageHost()
 media_probe = MediaProbe()
-remote_downloader = RemoteDownloader(settings.max_file_size, settings.request_timeout, allow_private_downloads=settings.allow_private_downloads)
+remote_downloader = RemoteDownloader(
+    settings.max_file_size,
+    settings.request_timeout,
+    allow_private_downloads=settings.allow_private_downloads,
+    aria2_connections=settings.turbo_aria2_connections if settings.turbo_mode else 8,
+    aria2_split=settings.turbo_aria2_split if settings.turbo_mode else 8,
+    aria2_min_split_size=settings.turbo_aria2_min_split_size if settings.turbo_mode else "1M",
+)
 drive_downloader = GoogleDriveDownloader(settings.max_file_size, settings.request_timeout)
 social_downloader = SocialDownloader(
     settings.max_file_size,
@@ -1980,7 +1987,7 @@ async def send_result(target: PendingTarget, result: DownloadResult, mode: Uploa
 
     def log_upload_done(backend: str, elapsed_seconds: float, *, workers: int | None = None) -> None:
         logger.info(
-            "upload_done backend=%s chat_id=%s file=%s size=%s elapsed_ms=%d mbps=%.2f workers=%s local_bot_api=%s send_mode=%s",
+            "upload_done backend=%s chat_id=%s file=%s size=%s elapsed_ms=%d mbps=%.2f workers=%s local_bot_api=%s send_mode=%s turbo=%s",
             backend,
             target.chat_id,
             result.filename,
@@ -1990,6 +1997,7 @@ async def send_result(target: PendingTarget, result: DownloadResult, mode: Uploa
             workers if workers is not None else "-",
             bot_api.is_local,
             send_mode,
+            settings.turbo_mode,
         )
 
     async def upload_with_telethon(file_arg):

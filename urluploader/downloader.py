@@ -29,10 +29,22 @@ class FileTooLargeError(DownloadError):
 
 
 class RemoteDownloader:
-    def __init__(self, max_file_size: int, request_timeout: int, *, allow_private_downloads: bool = False) -> None:
+    def __init__(
+        self,
+        max_file_size: int,
+        request_timeout: int,
+        *,
+        allow_private_downloads: bool = False,
+        aria2_connections: int = 8,
+        aria2_split: int = 8,
+        aria2_min_split_size: str = "1M",
+    ) -> None:
         self.max_file_size = max_file_size
         self.request_timeout = request_timeout
         self.allow_private_downloads = allow_private_downloads
+        self.aria2_connections = max(1, aria2_connections)
+        self.aria2_split = max(1, aria2_split)
+        self.aria2_min_split_size = aria2_min_split_size
         self.aria2c = shutil.which("aria2c")
 
     async def inspect(self, url: str, preferred_filename: str | None = None) -> RemoteFileInfo:
@@ -170,9 +182,9 @@ class RemoteDownloader:
             "--summary-interval=1",
             "--console-log-level=error",
             "--show-console-readout=true",
-            "--max-connection-per-server=8",
-            "--split=8",
-            "--min-split-size=1M",
+            f"--max-connection-per-server={self.aria2_connections}",
+            f"--split={self.aria2_split}",
+            f"--min-split-size={self.aria2_min_split_size}",
             "--max-tries=3",
             "--retry-wait=3",
             "--user-agent=Mozilla/5.0 URLUploadBot/2.0",

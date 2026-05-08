@@ -23,6 +23,10 @@ class Settings:
     bot_api_base_url: str
     bot_api_timeout_seconds: int
     fast_url_upload: bool
+    turbo_mode: bool
+    turbo_aria2_connections: int
+    turbo_aria2_split: int
+    turbo_aria2_min_split_size: str
     max_concurrent_jobs: int
     max_concurrent_inspections: int
     max_concurrent_downloads: int
@@ -163,6 +167,10 @@ def load_settings() -> Settings:
         bot_api_base_url=os.getenv("BOT_API_BASE_URL", "https://api.telegram.org").strip().rstrip("/"),
         bot_api_timeout_seconds=_int_from_env("BOT_API_TIMEOUT_SECONDS", 900),
         fast_url_upload=_bool_from_env("FAST_URL_UPLOAD", True),
+        turbo_mode=_bool_from_env("TURBO_MODE", False),
+        turbo_aria2_connections=_int_from_env("TURBO_ARIA2_CONNECTIONS", 16),
+        turbo_aria2_split=_int_from_env("TURBO_ARIA2_SPLIT", 16),
+        turbo_aria2_min_split_size=os.getenv("TURBO_ARIA2_MIN_SPLIT_SIZE", "1M").strip() or "1M",
         max_concurrent_jobs=_int_from_env("MAX_CONCURRENT_JOBS", 40),
         max_concurrent_inspections=_int_from_env("MAX_CONCURRENT_INSPECTIONS", 60),
         max_concurrent_downloads=_int_from_env("MAX_CONCURRENT_DOWNLOADS", 25),

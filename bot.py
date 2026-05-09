@@ -24,6 +24,7 @@ from zoneinfo import ZoneInfo
 from aiohttp import web
 from telethon import Button, TelegramClient, events, utils
 from telethon.errors import FloodWaitError
+from telethon.tl.functions.channels import GetFullChannelRequest
 from telethon.tl.types import DocumentAttributeVideo
 
 from urluploader.bot_api import BotApiClient
@@ -81,6 +82,7 @@ CONTROL_SECRET = os.getenv("CONTROL_SECRET", "")
 CONTROL_AGENT_ENABLED = os.getenv("CONTROL_AGENT_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
 CONTROL_BOT_ID = os.getenv("CONTROL_BOT_ID", "baixaaqui").strip() or "baixaaqui"
 CONTROL_BOT_NAME = os.getenv("CONTROL_BOT_NAME", "BaixaAqui_Bot").strip() or CONTROL_BOT_ID
+CONTROL_CHANNEL_USERNAME = os.getenv("CONTROL_CHANNEL_USERNAME", "@QG_BALTIGO").strip()
 CONTROL_STATE: dict[str, object] = {"broadcast_running": False, "started_at": int(time.time())}
 BALTIGO_UNIVERSE_WEBAPP_URL = os.getenv(
     "BALTIGO_UNIVERSE_WEBAPP_URL",
@@ -557,13 +559,99 @@ def control_premium_metrics() -> dict[str, object]:
     return {"available": True, "active_total": active_total, "total_records": total_records, "plans": plans}
 
 
+def ensure_channel_metrics_table() -> None:
+    with store.connection() as db:
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS channel_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                channel_id INTEGER NOT NULL,
+                username TEXT,
+                title TEXT,
+                subscribers INTEGER NOT NULL,
+                captured_at INTEGER NOT NULL
+            )
+            """
+        )
+        db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_channel_snapshots_lookup
+            ON channel_snapshots(channel_id, captured_at)
+            """
+        )
+
+
+def control_channel_delta(db, channel_id: int, current_count: int, current_at: int, seconds: int) -> int | None:
+    row = db.execute(
+        """
+        SELECT subscribers
+        FROM channel_snapshots
+        WHERE channel_id = ? AND captured_at <= ?
+        ORDER BY captured_at DESC
+        LIMIT 1
+        """,
+        (channel_id, current_at - seconds),
+    ).fetchone()
+    if row is None:
+        row = db.execute(
+            """
+            SELECT subscribers
+            FROM channel_snapshots
+            WHERE channel_id = ?
+            ORDER BY captured_at ASC
+            LIMIT 1
+            """,
+            (channel_id,),
+        ).fetchone()
+    return current_count - int(row["subscribers"]) if row else None
+
+
+async def control_channel_metrics() -> dict[str, object]:
+    username = CONTROL_CHANNEL_USERNAME
+    if not username:
+        return {"available": False}
+    try:
+        entity = await client.get_entity(username)
+        full = await client(GetFullChannelRequest(entity))
+        subscribers = int(getattr(full.full_chat, "participants_count", 0) or 0)
+        now = int(time.time())
+        channel_id = int(getattr(entity, "id", 0) or 0)
+        title = str(getattr(entity, "title", "") or username)
+        public_username = str(getattr(entity, "username", "") or username.lstrip("@"))
+        ensure_channel_metrics_table()
+        with store.connection() as db:
+            db.execute(
+                """
+                INSERT INTO channel_snapshots (channel_id, username, title, subscribers, captured_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (channel_id, public_username, title, subscribers, now),
+            )
+            deltas = {
+                "24h": control_channel_delta(db, channel_id, subscribers, now, 86400),
+                "7d": control_channel_delta(db, channel_id, subscribers, now, 604800),
+                "30d": control_channel_delta(db, channel_id, subscribers, now, 2592000),
+            }
+        return {
+            "available": True,
+            "id": channel_id,
+            "username": public_username,
+            "title": title,
+            "subscribers": subscribers,
+            "deltas": deltas,
+            "captured_at": now,
+        }
+    except Exception as exc:
+        return {"available": False, "username": username, "error": str(exc)}
+
+
 async def control_metrics(request):
     if not control_authorized(request):
         return web.json_response({"ok": False, "error": "unauthorized"}, status=401)
     with store.connection() as db:
         active = int(db.execute("SELECT COUNT(*) FROM users WHERE is_blocked=0").fetchone()[0] or 0)
         banned = int(db.execute("SELECT COUNT(*) FROM users WHERE is_blocked=1").fetchone()[0] or 0)
-    return web.json_response({"ok": True, "bot_id": CONTROL_BOT_ID, "name": CONTROL_BOT_NAME, "users_active": active, "users_inactive": 0, "users_banned": banned, "admins": len(settings.admin_ids), "premium": control_premium_metrics(), "broadcast_running": bool(CONTROL_STATE.get("broadcast_running")), "last_broadcast": CONTROL_STATE.get("last_broadcast") or {}})
+    return web.json_response({"ok": True, "bot_id": CONTROL_BOT_ID, "name": CONTROL_BOT_NAME, "users_active": active, "users_inactive": 0, "users_banned": banned, "admins": len(settings.admin_ids), "premium": control_premium_metrics(), "channel": await control_channel_metrics(), "broadcast_running": bool(CONTROL_STATE.get("broadcast_running")), "last_broadcast": CONTROL_STATE.get("last_broadcast") or {}})
 
 
 async def control_block(request):

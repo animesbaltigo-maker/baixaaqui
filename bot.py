@@ -525,13 +525,45 @@ async def control_health(request):
     return web.json_response({"ok": True, "bot_id": CONTROL_BOT_ID, "name": CONTROL_BOT_NAME, "username": username, "online": True, "broadcast_running": bool(CONTROL_STATE.get("broadcast_running")), "uptime_seconds": int(time.time()) - int(CONTROL_STATE.get("started_at", time.time()))})
 
 
+def control_premium_metrics() -> dict[str, object]:
+    with store.connection() as db:
+        rows = db.execute(
+            """
+            SELECT plan, COUNT(*) AS total
+            FROM users
+            WHERE is_blocked = 0
+            GROUP BY plan
+            ORDER BY total DESC, plan
+            """
+        ).fetchall()
+
+    plans: list[dict[str, object]] = []
+    active_total = 0
+    total_records = 0
+    for row in rows:
+        code = normalize_plan_key(row["plan"])
+        total = int(row["total"] or 0)
+        is_premium = code != "free"
+        if is_premium:
+            active_total += total
+        total_records += total
+        plan = plan_for_key(code)
+        plans.append({
+            "code": code,
+            "name": plan.name,
+            "active": total if is_premium else 0,
+            "total": total,
+        })
+    return {"available": True, "active_total": active_total, "total_records": total_records, "plans": plans}
+
+
 async def control_metrics(request):
     if not control_authorized(request):
         return web.json_response({"ok": False, "error": "unauthorized"}, status=401)
     with store.connection() as db:
         active = int(db.execute("SELECT COUNT(*) FROM users WHERE is_blocked=0").fetchone()[0] or 0)
         banned = int(db.execute("SELECT COUNT(*) FROM users WHERE is_blocked=1").fetchone()[0] or 0)
-    return web.json_response({"ok": True, "bot_id": CONTROL_BOT_ID, "name": CONTROL_BOT_NAME, "users_active": active, "users_inactive": 0, "users_banned": banned, "admins": len(settings.admin_ids), "broadcast_running": bool(CONTROL_STATE.get("broadcast_running")), "last_broadcast": CONTROL_STATE.get("last_broadcast") or {}})
+    return web.json_response({"ok": True, "bot_id": CONTROL_BOT_ID, "name": CONTROL_BOT_NAME, "users_active": active, "users_inactive": 0, "users_banned": banned, "admins": len(settings.admin_ids), "premium": control_premium_metrics(), "broadcast_running": bool(CONTROL_STATE.get("broadcast_running")), "last_broadcast": CONTROL_STATE.get("last_broadcast") or {}})
 
 
 async def control_block(request):

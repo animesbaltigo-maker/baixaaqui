@@ -79,8 +79,8 @@ link_storage = LocalLinkStorage(settings.public_files_dir, settings.public_base_
 
 CONTROL_SECRET = os.getenv("CONTROL_SECRET", "")
 CONTROL_AGENT_ENABLED = os.getenv("CONTROL_AGENT_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
-CONTROL_BOT_ID = os.getenv("CONTROL_BOT_ID", "baixaaqui")
-CONTROL_BOT_NAME = os.getenv("CONTROL_BOT_NAME", "BaixaAqui_Bot")
+CONTROL_BOT_ID = os.getenv("CONTROL_BOT_ID", "baixaaqui").strip() or "baixaaqui"
+CONTROL_BOT_NAME = os.getenv("CONTROL_BOT_NAME", "BaixaAqui_Bot").strip() or CONTROL_BOT_ID
 CONTROL_STATE: dict[str, object] = {"broadcast_running": False, "started_at": int(time.time())}
 BALTIGO_UNIVERSE_WEBAPP_URL = os.getenv(
     "BALTIGO_UNIVERSE_WEBAPP_URL",
@@ -3338,7 +3338,9 @@ async def start_link_server() -> None:
         app.router.add_static("/files", settings.public_files_dir, show_index=False)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, settings.link_server_host, settings.link_server_port)
+    control_port = int(os.getenv("CONTROL_AGENT_PORT", "8787"))
+    site_port = control_port if CONTROL_AGENT_ENABLED else settings.link_server_port
+    site = web.TCPSite(runner, settings.link_server_host, site_port)
     await site.start()
 
 

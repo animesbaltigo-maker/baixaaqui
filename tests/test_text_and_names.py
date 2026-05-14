@@ -5,9 +5,12 @@ import uuid
 from pathlib import Path
 import unittest
 
+from urluploader.config import _ids_from_env
 from urluploader.database import PremiumStore
 from urluploader.html_text import h, preserve
+from urluploader.instagram_carousel import is_instagram_photo_candidate_url
 from urluploader.link_storage import LocalLinkStorage
+from urluploader.music_fallback import classify_spotify_url, is_music_matching_url, split_title_artist
 from urluploader.names import extract_url, is_social_url, normalize_shared_url, sanitize_filename
 from urluploader.premium_i18n import tx
 from urluploader.social import SocialDownloader, SocialInfo, SocialMediaItem, _clean_progress, _friendly_gallery_error, _progressive_only_selector
@@ -33,6 +36,15 @@ class TextAndNamesTest(unittest.TestCase):
         rendered = tx("pt", "welcome", name="<Kayky>")
         self.assertIn("&lt;Kayky&gt;", rendered)
 
+    def test_env_ids_support_negative_chat_ids(self):
+        import os
+
+        os.environ["TEST_CHAT_IDS"] = "-100123,42"
+        try:
+            self.assertEqual(_ids_from_env("TEST_CHAT_IDS"), {-100123, 42})
+        finally:
+            os.environ.pop("TEST_CHAT_IDS", None)
+
     def test_filename_sanitization(self):
         self.assertEqual(sanitize_filename("../video?.mp4"), "video_.mp4")
 
@@ -57,6 +69,32 @@ class TextAndNamesTest(unittest.TestCase):
 
     def test_social_url_rejects_lookalike_host(self):
         self.assertFalse(is_social_url("https://youtube.com.evil.example/watch?v=abc"))
+
+    def test_music_platforms_are_social_urls(self):
+        urls = [
+            "https://open.spotify.com/track/abc",
+            "https://www.deezer.com/track/123",
+            "https://music.apple.com/br/album/demo/123",
+            "https://tidal.com/browse/track/123",
+            "https://music.amazon.com/albums/abc",
+            "https://www.shazam.com/track/123/demo",
+        ]
+        for url in urls:
+            self.assertTrue(is_social_url(url), url)
+            self.assertTrue(is_music_matching_url(url), url)
+
+    def test_spotify_url_classification(self):
+        self.assertEqual(classify_spotify_url("https://open.spotify.com/track/abc"), "track")
+        self.assertEqual(classify_spotify_url("https://open.spotify.com/album/abc"), "album")
+        self.assertEqual(classify_spotify_url("https://open.spotify.com/playlist/abc"), "playlist")
+
+    def test_music_title_artist_split(self):
+        self.assertEqual(split_title_artist("Artist - Song", ""), ("Song", "Artist"))
+        self.assertEqual(split_title_artist("Song", "Artist"), ("Song", "Artist"))
+
+    def test_instagram_photo_candidate_detection(self):
+        self.assertTrue(is_instagram_photo_candidate_url("https://www.instagram.com/p/ABC123/"))
+        self.assertFalse(is_instagram_photo_candidate_url("https://www.instagram.com/reel/ABC123/"))
 
     def test_link_storage_quotes_filename(self):
         root = make_local_tmp()

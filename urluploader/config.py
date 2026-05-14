@@ -41,6 +41,11 @@ class Settings:
     ytdlp_extractors_args: str
     ytdlp_user_agent: str
     download_proxy: str
+    spotify_client_id: str
+    spotify_client_secret: str
+    spotify_db_channel_id: int | None
+    genius_token: str
+    music_collection_limit: int
     ytdlp_concurrent_fragments: int
     gallery_dl_config: str
     parallel_upload_enabled: bool
@@ -123,7 +128,7 @@ def _ids_from_env(name: str) -> set[int]:
     ids: set[int] = set()
     for chunk in raw.replace(";", ",").split(","):
         chunk = chunk.strip()
-        if chunk.isdigit():
+        if chunk.lstrip("-").isdigit():
             ids.add(int(chunk))
     return ids
 
@@ -209,6 +214,11 @@ def load_settings() -> Settings:
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
         ).strip(),
         download_proxy=os.getenv("DOWNLOAD_PROXY", os.getenv("HTTP_PROXY", "")).strip(),
+        spotify_client_id=os.getenv("SPOTIFY_CLIENT_ID", "").strip(),
+        spotify_client_secret=os.getenv("SPOTIFY_CLIENT_SECRET", "").strip(),
+        spotify_db_channel_id=next(iter(_ids_from_env("SPOTIFY_DB_CHANNEL_ID")), None),
+        genius_token=os.getenv("GENIUS_TOKEN", "").strip(),
+        music_collection_limit=_int_from_env("MUSIC_COLLECTION_LIMIT", 10),
         ytdlp_concurrent_fragments=_int_from_env("YTDLP_CONCURRENT_FRAGMENTS", 4),
         gallery_dl_config=os.getenv("GALLERY_DL_CONFIG", "").strip(),
         parallel_upload_enabled=_bool_from_env("PARALLEL_UPLOAD_ENABLED", True),

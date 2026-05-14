@@ -4,8 +4,10 @@ Bot Telegram premium para baixar midias por link, reenviar arquivos, converter d
 
 ## Recursos
 
-- YouTube, YouTube Music, TikTok, Instagram, X/Twitter, Facebook, Pinterest, Reddit, SoundCloud, Twitch, Vimeo e links diretos.
+- YouTube, YouTube Music, TikTok, Instagram, X/Twitter, Facebook, Pinterest, Reddit, SoundCloud, Twitch, Vimeo, Kwai e links diretos.
 - Crunchyroll com cookies da conta do dono do bot.
+- Musicas por matching: Spotify, Deezer, Apple Music, Tidal, Amazon Music e Shazam viram metadados e sao baixados como MP3 via YouTube quando possivel.
+- Imagens: Instagram carrossel/fotos, TikTok slideshow por fallback e Pinterest via gallery-dl.
 - Qualidades reais do YouTube extraidas do JSON do yt-dlp.
 - Cookies fixos por plataforma para VPS.
 - Fallback yt-dlp -> gallery-dl em redes sociais.
@@ -83,6 +85,20 @@ DOWNLOAD_PROXY=
 ```
 
 Use `DOWNLOAD_PROXY` somente se a VPS estiver bloqueada por alguma plataforma; o valor e repassado para downloads diretos, yt-dlp, gallery-dl e aria2c.
+
+Musicas por matching:
+
+```env
+SPOTIFY_CLIENT_ID=
+SPOTIFY_CLIENT_SECRET=
+SPOTIFY_DB_CHANNEL_ID=
+GENIUS_TOKEN=
+MUSIC_COLLECTION_LIMIT=10
+```
+
+Spotify exige `SPOTIFY_CLIENT_ID` e `SPOTIFY_CLIENT_SECRET`. Deezer, Apple Music, Tidal, Amazon Music e Shazam tentam extrair metadados publicos e baixar uma correspondencia no YouTube. Isso nao baixa streams privados dessas plataformas.
+
+Crunchyroll: cookies liberam login quando o conteudo e acessivel pela conta, mas videos protegidos por DRM nao sao baixados.
 
 Conteudo publico geralmente nao exige conta premium. Conteudo privado, stories, age gate, captcha, challenge, regiao bloqueada ou 429 pode exigir cookie valido. Cookies expiram; o diagnostico avisa quando passarem de `YTDLP_COOKIES_MAX_AGE_HOURS`.
 

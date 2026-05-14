@@ -15,6 +15,8 @@ O Baixa Aqui ja cobre boa parte do que os projetos externos fazem: Telethon, yt-
 - Normalizacao de URL: remove `utm_*`, `si`, `feature` e `ref`, limpa pontuacao final e preserva parametros validos.
 - Protecao contra hosts parecidos: `youtube.com.evil.example` nao passa como URL social.
 - `DOWNLOAD_PROXY`: proxy opcional para downloads diretos, yt-dlp, gallery-dl e aria2c.
+- Musicas por matching: Spotify/Deezer/Apple Music/Tidal/Amazon Music/Shazam resolvem metadados e baixam MP3 via YouTube quando possivel.
+- Instagram carrossel: posts `/p/` tentam extrair imagens do embed antes do yt-dlp/gallery-dl.
 - Testes cobrindo normalizacao, host falso, cookie Crunchyroll e proxy em yt-dlp.
 
 ## Repos analisados

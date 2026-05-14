@@ -60,6 +60,7 @@ AUDIO_EXTENSIONS = {
 }
 SOCIAL_DOMAINS = {
     "crunchyroll.com",
+    "deezer.com",
     "facebook.com",
     "fb.watch",
     "instagram.com",
@@ -70,8 +71,12 @@ SOCIAL_DOMAINS = {
     "redd.it",
     "soundcloud.com",
     "spotify.com",
+    "music.apple.com",
+    "music.amazon.com",
+    "music.amazon.com.br",
     "threads.net",
     "tiktok.com",
+    "tidal.com",
     "twitch.tv",
     "twitter.com",
     "vimeo.com",
@@ -81,6 +86,7 @@ SOCIAL_DOMAINS = {
     "youtu.be",
     "kwai.com",
     "kw.ai",
+    "shazam.com",
 }
 
 

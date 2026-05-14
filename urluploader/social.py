@@ -12,8 +12,12 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import aiohttp
+
+from .instagram_carousel import fetch_carousel_images, is_instagram_photo_candidate_url
 from .media_probe import MediaProbe
 from .models import DownloadResult, UploadMode
+from .music_fallback import MUSIC_MATCHING_PLATFORMS, download_music_url, inspect_music_url
 from .names import sanitize_filename, unique_path
 from .progress import human_size
 from .cookies import inspect_cookie_file, resolve_platform_cookie_file
@@ -113,6 +117,9 @@ class SocialDownloader:
         aria2_min_split_size: str = "1M",
         gallery_config: str = "",
         proxy: str = "",
+        spotify_client_id: str = "",
+        spotify_client_secret: str = "",
+        music_collection_limit: int = 10,
     ) -> None:
         self.max_file_size = max_file_size
         self.ytdlp_format = ytdlp_format
@@ -128,12 +135,68 @@ class SocialDownloader:
         self.aria2_min_split_size = aria2_min_split_size
         self.gallery_config = gallery_config.strip()
         self.proxy = proxy.strip()
+        self.spotify_client_id = spotify_client_id.strip()
+        self.spotify_client_secret = spotify_client_secret.strip()
+        self.music_collection_limit = max(1, music_collection_limit)
         self.ffmpeg = _find_ffmpeg()
         self.ffprobe = _find_ffprobe(self.ffmpeg)
         self.can_postprocess = bool(self.ffmpeg and self.ffprobe)
         self.aria2c = shutil.which("aria2c")
 
     async def inspect(self, url: str) -> SocialInfo:
+        platform = _platform_from_url(url)
+        if platform in MUSIC_MATCHING_PLATFORMS:
+            track, item_count = await inspect_music_url(
+                url,
+                spotify_client_id=self.spotify_client_id,
+                spotify_client_secret=self.spotify_client_secret,
+                limit=self.music_collection_limit,
+                proxy=self.proxy,
+                user_agent=self.user_agent,
+            )
+            description = f"{track.artist} - {track.title}".strip(" -")
+            if item_count > 1:
+                description = f"{description}\nColecao: {item_count} faixas"
+            return SocialInfo(
+                url=url,
+                title=track.title,
+                author=track.artist,
+                duration=track.duration,
+                media_type="audio",
+                item_count=item_count,
+                quality="MP3 320kbps",
+                description=description,
+                thumbnail=track.cover_url,
+                qualities=(),
+                provider=f"music:{platform}",
+            )
+        if platform == "instagram" and is_instagram_photo_candidate_url(url):
+            images = await asyncio.to_thread(fetch_carousel_images, url)
+            if images:
+                media_items = tuple(
+                    SocialMediaItem(
+                        url=image_url,
+                        filename=f"instagram-{index:02d}.jpg",
+                        mime_type="image/jpeg",
+                        kind="image",
+                    )
+                    for index, image_url in enumerate(images, start=1)
+                )
+                return SocialInfo(
+                    url=url,
+                    title="Instagram",
+                    author=None,
+                    duration=None,
+                    media_type="album" if len(media_items) > 1 else "image",
+                    item_count=len(media_items),
+                    quality=None,
+                    description=None,
+                    thumbnail=images[0],
+                    qualities=(),
+                    provider="instagram_carousel",
+                    media_items=media_items,
+                )
+
         data: dict[str, object] | None
         output: str
         data, output = await self._dump_ytdlp_json(url, use_cookies=True)
@@ -222,6 +285,20 @@ class SocialDownloader:
         format_selector: str | None = None,
         prefetched_info: SocialInfo | None = None,
     ) -> list[DownloadResult]:
+        if prefetched_info and prefetched_info.provider.startswith("music:"):
+            return await download_music_url(
+                url,
+                target_dir,
+                max_file_size=self.max_file_size,
+                spotify_client_id=self.spotify_client_id,
+                spotify_client_secret=self.spotify_client_secret,
+                limit=self.music_collection_limit,
+                proxy=self.proxy,
+                user_agent=self.user_agent,
+                status=status,
+            )
+        if prefetched_info and prefetched_info.provider == "instagram_carousel" and prefetched_info.media_items:
+            return await self._download_direct_media_items(prefetched_info, target_dir, preferred_filename, mode, status)
         if prefetched_info and prefetched_info.provider == "gallery_dl" and prefetched_info.media_items:
             return await self._download_gallery_media(prefetched_info, target_dir, preferred_filename, mode, status)
 
@@ -624,6 +701,50 @@ class SocialDownloader:
                     mime_type=mimetypes.guess_type(path.name)[0],
                 )
             )
+        return results
+
+    async def _download_direct_media_items(
+        self,
+        info: SocialInfo,
+        target_dir: Path,
+        preferred_filename: str | None,
+        mode: UploadMode,
+        status: StatusCallback | None,
+    ) -> list[DownloadResult]:
+        items = _select_gallery_items(info, mode)
+        if not items:
+            raise SocialDownloadError("Nao encontrei imagens compativeis nesse link.")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        timeout = aiohttp.ClientTimeout(total=120)
+        headers = {"User-Agent": self.user_agent or "Mozilla/5.0", "Accept": "*/*"}
+        results: list[DownloadResult] = []
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+            for index, item in enumerate(items, start=1):
+                if status:
+                    await status(_gallery_download_text(index, len(items), item.filename))
+                filename = sanitize_filename(preferred_filename if len(items) == 1 else item.filename) or item.filename
+                path = unique_path(target_dir, filename)
+                current = 0
+                async with session.get(item.url, proxy=self.proxy or None) as response:
+                    if response.status >= 400:
+                        raise SocialDownloadError(f"Falha ao baixar imagem: HTTP {response.status}.")
+                    with path.open("wb") as file:
+                        async for chunk in response.content.iter_chunked(512 * 1024):
+                            if not chunk:
+                                continue
+                            current += len(chunk)
+                            if current > self.max_file_size:
+                                path.unlink(missing_ok=True)
+                                raise SocialDownloadError(f"Imagem maior que o limite: {human_size(self.max_file_size)}.")
+                            file.write(chunk)
+                results.append(
+                    DownloadResult(
+                        path=path,
+                        filename=path.name,
+                        size=path.stat().st_size,
+                        mime_type=mimetypes.guess_type(path.name)[0] or item.mime_type,
+                    )
+                )
         return results
 
     async def _coalesce_media_files(self, files: list[Path], target_dir: Path, mode: UploadMode) -> list[Path]:
@@ -1056,6 +1177,16 @@ def _platform_from_url(url: str) -> str:
         return "youtube"
     if "spotify" in hostname:
         return "spotify"
+    if "deezer" in hostname:
+        return "deezer"
+    if hostname == "music.apple.com":
+        return "apple_music"
+    if "tidal" in hostname:
+        return "tidal"
+    if "music.amazon" in hostname:
+        return "amazon_music"
+    if "shazam" in hostname:
+        return "shazam"
     if "twitch" in hostname:
         return "twitch"
     if "reddit" in hostname or hostname == "redd.it":

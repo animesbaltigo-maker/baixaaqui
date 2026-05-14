@@ -57,6 +57,16 @@ def platform_from_url(url: str | None) -> str:
         return "soundcloud"
     if "spotify" in hostname:
         return "spotify"
+    if "deezer" in hostname:
+        return "deezer"
+    if hostname == "music.apple.com":
+        return "apple_music"
+    if "tidal" in hostname:
+        return "tidal"
+    if "music.amazon" in hostname:
+        return "amazon_music"
+    if "shazam" in hostname:
+        return "shazam"
     if "twitch" in hostname:
         return "twitch"
     if "kwai" in hostname or hostname == "kw.ai":

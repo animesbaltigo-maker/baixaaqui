@@ -42,7 +42,17 @@ from urluploader.database import PremiumStore
 from urluploader.downloader import DownloadError, FileTooLargeError, RemoteDownloader
 from urluploader.drive import DriveDownloadError, GoogleDriveDownloader, is_drive_url
 from urluploader.diagnostics import render_diagnostics, run_diagnostics
-from urluploader.errors import BaixaAquiError, CookieRequiredError, DownloadTimeoutError, DrmProtectedError, PlatformBlockedError, UploadFailedError
+from urluploader.errors import (
+    BaixaAquiError,
+    CookieRequiredError,
+    DownloadTimeoutError,
+    DrmProtectedError,
+    MissingDependencyError,
+    MusicMatchingError,
+    PlatformBlockedError,
+    SpotifyNotConfiguredError,
+    UploadFailedError,
+)
 from urluploader.html_text import h, preserve
 from urluploader.http_client import close_shared_http_session
 from urluploader.image_host import ImageHostError, TelegraphImageHost
@@ -121,6 +131,9 @@ social_downloader = SocialDownloader(
     aria2_min_split_size=settings.turbo_aria2_min_split_size if settings.turbo_mode else "1M",
     gallery_config=settings.gallery_dl_config,
     proxy=settings.download_proxy,
+    spotify_client_id=settings.spotify_client_id,
+    spotify_client_secret=settings.spotify_client_secret,
+    music_collection_limit=settings.music_collection_limit,
 )
 
 job_slots = asyncio.Semaphore(settings.max_concurrent_jobs)
@@ -211,6 +224,12 @@ def _legacy_humanize_provider_error(language: str, exc: Exception) -> str:
         return tx(language, "download_timeout")
     if isinstance(exc, UploadFailedError):
         return tx(language, "upload_failed")
+    if isinstance(exc, SpotifyNotConfiguredError):
+        return tx(language, "spotify_not_configured")
+    if isinstance(exc, MissingDependencyError):
+        return tx(language, "missing_music_dependency")
+    if isinstance(exc, MusicMatchingError):
+        return tx(language, "music_matching_failed", reason=h(str(exc)))
     text = str(exc).strip()
     lowered = text.lower()
     if "confirm youâ€™re not a bot" in lowered or "confirm you're not a bot" in lowered or "--cookies-from-browser" in lowered:

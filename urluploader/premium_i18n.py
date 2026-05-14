@@ -572,6 +572,24 @@ TEXTS["es"].update(
 
 TEXTS["pt"].update(
     {
+        "welcome": (
+            "😉 Olá, {name}!\n\n"
+            "💜 <b>Baixe vídeos sem marca d'água, músicas e imagens</b>\n\n"
+            "🎥 <b>Vídeos:</b>\n"
+            "   ├ TikTok • Instagram • Facebook\n"
+            "   ├ YouTube • X/Twitter • Kwai\n"
+            "   └ Pinterest • Crunchyroll\n\n"
+            "🎵 <b>Músicas:</b>\n"
+            "   ├ Spotify • YouTube Music • SoundCloud\n"
+            "   ├ Deezer • Apple Music • Tidal\n"
+            "   └ Amazon Music • Shazam\n\n"
+            "📸 <b>Imagens:</b>\n"
+            "   ├ Instagram • TikTok\n"
+            "   └ Pinterest\n\n"
+            "🧪 <b>Outros vídeos:</b>\n"
+            "   └ Posso tentar baixar também (Beta)\n\n"
+            "👉 Envie o link do conteúdo aqui no chat"
+        ),
         "stage_preparing": "<b>Preparando</b>\n<i>Validando a rota mais rapida antes de baixar.</i>",
         "stage_downloading": "<b>Baixando</b>\n\n{progress}",
         "stage_uploading": "<b>Enviando</b>\n\n{progress}",
@@ -581,6 +599,10 @@ TEXTS["pt"].update(
         "platform_blocked": "A plataforma bloqueou temporariamente este servidor. Tente novamente mais tarde ou configure cookies na VPS.",
         "download_timeout": "A plataforma demorou demais para responder. Interrompi a tarefa para manter o bot estavel.",
         "upload_failed": "O Telegram recusou o envio depois de algumas tentativas. Tente de novo em alguns minutos.",
+        "spotify_not_configured": "Spotify precisa de SPOTIFY_CLIENT_ID e SPOTIFY_CLIENT_SECRET no .env. Depois disso eu baixo via matching no YouTube.",
+        "missing_music_dependency": "Falta uma dependencia opcional de musica. Rode pip install -r requirements.txt na VPS.",
+        "music_matching_failed": "Nao consegui baixar essa musica por matching. Motivo: {reason}",
+        "spotify_playlist_limit": "Colecao detectada. Vou processar ate {n} faixas por vez.",
         "group_allowed": "<b>Grupo liberado</b>\n<code>{chat_id}</code> ja pode usar o modo automatico.",
         "group_blocked": "<b>Grupo bloqueado</b>\n<code>{chat_id}</code> nao recebera downloads automaticos.",
     }

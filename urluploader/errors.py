@@ -33,5 +33,21 @@ class MissingDependencyError(BaixaAquiError):
     """Raised when an optional production dependency is missing."""
 
 
+class SpotifyNotConfiguredError(BaixaAquiError):
+    """Raised when Spotify links are used without Spotify API credentials."""
+
+
+class MusicMatchingError(BaixaAquiError):
+    """Raised when a music platform cannot be matched to a downloadable source."""
+
+
+class DeezerPreviewOnlyError(BaixaAquiError):
+    """Raised when only a Deezer preview is available."""
+
+
+class ShazamResolutionError(BaixaAquiError):
+    """Raised when a Shazam track URL cannot be resolved."""
+
+
 class RateLimitedError(BaixaAquiError):
     """Raised when a user, group, or platform limit is hit."""

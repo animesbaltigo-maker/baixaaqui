@@ -5,6 +5,7 @@ Bot Telegram premium para baixar midias por link, reenviar arquivos, converter d
 ## Recursos
 
 - YouTube, YouTube Music, TikTok, Instagram, X/Twitter, Facebook, Pinterest, Reddit, SoundCloud, Twitch, Vimeo e links diretos.
+- Crunchyroll com cookies da conta do dono do bot.
 - Qualidades reais do YouTube extraidas do JSON do yt-dlp.
 - Cookies fixos por plataforma para VPS.
 - Fallback yt-dlp -> gallery-dl em redes sociais.
@@ -76,6 +77,7 @@ YTDLP_COOKIES_INSTAGRAM=/opt/baixaaqui/cookies/instagram.txt
 YTDLP_COOKIES_TIKTOK=/opt/baixaaqui/cookies/tiktok.txt
 YTDLP_COOKIES_TWITTER=/opt/baixaaqui/cookies/twitter.txt
 YTDLP_COOKIES_FACEBOOK=/opt/baixaaqui/cookies/facebook.txt
+YTDLP_COOKIES_CRUNCHYROLL=/opt/baixaaqui/cookies/crunchyroll.txt
 GALLERY_DL_CONFIG=/opt/baixaaqui/cookies/gallery-dl.conf
 ```
 

@@ -8,7 +8,7 @@ import unittest
 from urluploader.database import PremiumStore
 from urluploader.html_text import h, preserve
 from urluploader.link_storage import LocalLinkStorage
-from urluploader.names import normalize_shared_url, sanitize_filename
+from urluploader.names import is_social_url, normalize_shared_url, sanitize_filename
 from urluploader.premium_i18n import tx
 from urluploader.social import SocialDownloader, SocialInfo, SocialMediaItem, _clean_progress, _friendly_gallery_error, _progressive_only_selector
 
@@ -43,6 +43,9 @@ class TextAndNamesTest(unittest.TestCase):
     def test_html_escaped_query_is_normalized(self):
         raw = "https://www.tiktok.com/@demo/photo/123?_r=1&amp;_t=abc"
         self.assertEqual(normalize_shared_url(raw), "https://www.tiktok.com/@demo/photo/123?_r=1&_t=abc")
+
+    def test_crunchyroll_is_social_url(self):
+        self.assertTrue(is_social_url("https://www.crunchyroll.com/watch/ABC123/demo"))
 
     def test_link_storage_quotes_filename(self):
         root = make_local_tmp()
@@ -112,6 +115,26 @@ class TextAndNamesTest(unittest.TestCase):
         self.assertNotIn(" --audio-format mp3", joined)
         self.assertNotIn(" -x ", f" {joined} ")
         self.assertIn("bestaudio[ext=m4a]", joined)
+
+    def test_social_downloader_uses_crunchyroll_cookie_file(self):
+        root = make_local_tmp()
+        try:
+            cookie_file = root / "crunchyroll.txt"
+            cookie_file.write_text(
+                "# Netscape HTTP Cookie File\n"
+                ".crunchyroll.com\tTRUE\t/\tTRUE\t1893456000\tetp_rt\tsecret\n",
+                encoding="utf-8",
+            )
+            downloader = SocialDownloader(
+                1024 * 1024 * 200,
+                "best[ext=mp4][acodec!=none]/best",
+                platform_cookies={"crunchyroll": str(cookie_file)},
+            )
+            cmd = downloader._build_command("https://www.crunchyroll.com/watch/ABC123/demo", root, "video")
+            self.assertIn("--cookies", cmd)
+            self.assertIn(str(cookie_file), cmd)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
 
     def test_social_info_round_trips_gallery_items(self):
         info = SocialInfo(

@@ -16,6 +16,7 @@ PLATFORM_COOKIE_ENV = {
     "x": "YTDLP_COOKIES_TWITTER",
     "twitter": "YTDLP_COOKIES_TWITTER",
     "facebook": "YTDLP_COOKIES_FACEBOOK",
+    "crunchyroll": "YTDLP_COOKIES_CRUNCHYROLL",
 }
 
 
@@ -50,6 +51,8 @@ def platform_from_url(url: str) -> str:
         return "x"
     if "facebook" in hostname or hostname == "fb.watch":
         return "facebook"
+    if "crunchyroll" in hostname:
+        return "crunchyroll"
     return hostname.split(".")[-2] if "." in hostname else hostname or "unknown"
 
 

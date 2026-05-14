@@ -57,6 +57,7 @@ AUDIO_EXTENSIONS = {
     ".wav",
 }
 SOCIAL_DOMAINS = {
+    "crunchyroll.com",
     "facebook.com",
     "fb.watch",
     "instagram.com",

@@ -42,7 +42,7 @@ from urluploader.database import PremiumStore
 from urluploader.downloader import DownloadError, FileTooLargeError, RemoteDownloader
 from urluploader.drive import DriveDownloadError, GoogleDriveDownloader, is_drive_url
 from urluploader.diagnostics import render_diagnostics, run_diagnostics
-from urluploader.errors import BaixaAquiError, CookieRequiredError, DownloadTimeoutError, PlatformBlockedError, UploadFailedError
+from urluploader.errors import BaixaAquiError, CookieRequiredError, DownloadTimeoutError, DrmProtectedError, PlatformBlockedError, UploadFailedError
 from urluploader.html_text import h, preserve
 from urluploader.http_client import close_shared_http_session
 from urluploader.image_host import ImageHostError, TelegraphImageHost
@@ -198,9 +198,13 @@ def _legacy_humanize_provider_error(language: str, exc: Exception) -> str:
             return tx(language, "facebook_auth_required")
         if "[youtube-auth-required]" in text:
             return tx(language, "youtube_auth_required")
+        if "[crunchyroll-auth-required]" in text:
+            return tx(language, "crunchyroll_auth_required")
         return tx(language, "auth_required")
     if isinstance(exc, PlatformBlockedError):
         return tx(language, "platform_blocked")
+    if isinstance(exc, DrmProtectedError):
+        return tx(language, "drm_protected")
     if isinstance(exc, DownloadTimeoutError):
         return tx(language, "download_timeout")
     if isinstance(exc, UploadFailedError):
@@ -240,9 +244,13 @@ def humanize_provider_error(language: str, exc: Exception) -> str:
             return tx(language, "facebook_auth_required")
         if "[youtube-auth-required]" in text:
             return tx(language, "youtube_auth_required")
+        if "[crunchyroll-auth-required]" in text:
+            return tx(language, "crunchyroll_auth_required")
         return tx(language, "auth_required")
     if isinstance(exc, PlatformBlockedError):
         return tx(language, "platform_blocked")
+    if isinstance(exc, DrmProtectedError):
+        return tx(language, "drm_protected")
     if isinstance(exc, DownloadTimeoutError):
         return tx(language, "download_timeout")
     if isinstance(exc, UploadFailedError):
@@ -255,6 +263,10 @@ def humanize_provider_error(language: str, exc: Exception) -> str:
         return tx(language, "facebook_auth_required")
     if "[youtube-auth-required]" in lowered:
         return tx(language, "youtube_auth_required")
+    if "[crunchyroll-auth-required]" in lowered:
+        return tx(language, "crunchyroll_auth_required")
+    if "[drm-protected]" in lowered or "known to use drm protection" in lowered:
+        return tx(language, "drm_protected")
     if "confirm you're not a bot" in lowered or "--cookies-from-browser" in lowered:
         return tx(language, "youtube_auth_required")
     if "facebook.com/login/" in lowered or ("unsupported url:" in lowered and "facebook" in lowered):

@@ -51,6 +51,8 @@ def platform_from_url(url: str | None) -> str:
         return "pinterest"
     if "tiktok" in hostname:
         return "tiktok"
+    if "crunchyroll" in hostname:
+        return "crunchyroll"
     if "soundcloud" in hostname:
         return "soundcloud"
     if "spotify" in hostname:

@@ -17,7 +17,7 @@ from .models import DownloadResult, UploadMode
 from .names import sanitize_filename, unique_path
 from .progress import human_size
 from .cookies import inspect_cookie_file, resolve_platform_cookie_file
-from .errors import BaixaAquiError, CookieRequiredError, DownloadTimeoutError, PlatformBlockedError
+from .errors import BaixaAquiError, CookieRequiredError, DownloadTimeoutError, DrmProtectedError, PlatformBlockedError
 
 
 class SocialDownloadError(BaixaAquiError):
@@ -750,7 +750,11 @@ def _typed_social_error(url: str, output: str) -> BaixaAquiError:
             return CookieRequiredError("[facebook-auth-required]")
         if platform in {"youtube", "youtube_music"}:
             return CookieRequiredError("[youtube-auth-required]")
+        if platform == "crunchyroll":
+            return CookieRequiredError("[crunchyroll-auth-required]")
         return CookieRequiredError("[auth-required]")
+    if _is_drm_error(output):
+        return DrmProtectedError("[drm-protected]")
     if any(marker in text for marker in ("http error 429", "too many requests", "captcha", "not a bot", "forbidden", "http error 403")):
         return PlatformBlockedError(_friendly_error(output))
     return SocialDownloadError(_friendly_error(output))
@@ -766,9 +770,25 @@ def _is_auth_error(output: str) -> bool:
             "authenticated cookies needed",
             "login required",
             "requires authentication",
+            "authentication required",
             "redirect to login page",
             "accounts/login",
             "private video",
+            "premium members",
+            "premium account",
+        )
+    )
+
+
+def _is_drm_error(output: str) -> bool:
+    text = output.lower()
+    return "drm" in text and any(
+        marker in text
+        for marker in (
+            "known to use drm protection",
+            "drm protected",
+            "uses drm",
+            "not be supported",
         )
     )
 
@@ -790,6 +810,8 @@ def _friendly_gallery_error(url: str, text: str) -> str:
             return "[facebook-auth-required]"
         if platform == "youtube":
             return "[youtube-auth-required]"
+        if platform == "crunchyroll":
+            return "[crunchyroll-auth-required]"
     line = text.strip().splitlines()[-1:] or [""]
     return line[0][:240] if line[0] else "A plataforma recusou a analise desse link."
 
@@ -1022,6 +1044,8 @@ def _platform_from_url(url: str) -> str:
         return "instagram"
     if "facebook" in hostname or hostname == "fb.watch":
         return "facebook"
+    if "crunchyroll" in hostname:
+        return "crunchyroll"
     if "youtu" in hostname:
         return "youtube"
     if "spotify" in hostname:

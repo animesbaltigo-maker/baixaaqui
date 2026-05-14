@@ -199,6 +199,7 @@ def load_settings() -> Settings:
             "x": os.getenv("YTDLP_COOKIES_TWITTER", "").strip(),
             "twitter": os.getenv("YTDLP_COOKIES_TWITTER", "").strip(),
             "facebook": os.getenv("YTDLP_COOKIES_FACEBOOK", "").strip(),
+            "crunchyroll": os.getenv("YTDLP_COOKIES_CRUNCHYROLL", "").strip(),
         },
         ytdlp_cookies_max_age_hours=_int_from_env("YTDLP_COOKIES_MAX_AGE_HOURS", 72),
         ytdlp_extractors_args=os.getenv("YTDLP_EXTRACTOR_ARGS", "").strip(),

@@ -57,6 +57,24 @@ class ContentProfilesTest(unittest.TestCase):
         self.assertTrue(profile.can_extract_audio)
         self.assertTrue(profile.can_choose_quality)
 
+    def test_crunchyroll_profile_is_detected(self):
+        profile = profile_for_social(
+            SocialInfo(
+                url="https://www.crunchyroll.com/watch/ABC123/demo",
+                title="Episode",
+                author="Crunchyroll",
+                duration=1200.0,
+                media_type="video",
+                item_count=1,
+                quality="ate 1080p",
+                description=None,
+                thumbnail=None,
+                qualities=(1080, 720),
+            )
+        )
+        self.assertEqual(profile.platform, "crunchyroll")
+        self.assertTrue(profile.can_choose_quality)
+
     def test_social_image_album_profile_stays_contextual(self):
         profile = profile_for_social(
             SocialInfo(

@@ -13,6 +13,10 @@ class PlatformBlockedError(BaixaAquiError):
     """Raised when a platform blocks the VPS/network temporarily."""
 
 
+class DrmProtectedError(BaixaAquiError):
+    """Raised when a platform only exposes DRM-protected media."""
+
+
 class UnsupportedUrlError(BaixaAquiError):
     """Raised when a URL is invalid or not supported."""
 

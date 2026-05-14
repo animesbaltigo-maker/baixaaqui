@@ -250,7 +250,7 @@ def load_settings() -> Settings:
         or "Baixa Aqui | @Baixa_aquibot",
         required_channels=_strings_from_env("REQUIRED_CHANNELS", "@Baixa_Aqui,@QG_BALTIGO"),
         required_channels_url=os.getenv(
-            "REQUIRED_CHANNEL_FOLDER_URL",
-            "https://t.me/addlist/sCT9DE3EP2RmYTJh",
+            "REQUIRED_CHANNEL_URL",
+            "https://t.me/Baixa_Aqui",
         ).strip(),
     )

@@ -1064,10 +1064,41 @@ async def is_member_of_required_channels(user_id: int) -> bool:
 def required_channel_gate_text(name: str) -> str:
     return (
         f"🛑 <b>Calma aí, {h(name or 'amigo')}</b>\n\n"
-        "Para usar este comando, você precisa entrar nos meus canais primeiro.\n\n"
-        "Assim você fica por dentro das novidades, avisos e atualizações.\n\n"
-        "Clique abaixo, entre nos canais da pasta e volte para tentar novamente."
+        "Para usar este comando, você precisa entrar nos canais oficiais primeiro.\n\n"
+        "É por lá que eu aviso novidades, recursos e atualizações importantes.\n\n"
+        "Entre nos canais abaixo e envie o comando novamente."
     )
+
+
+REQUIRED_CHANNEL_LABELS = {
+    "@Baixa_Aqui": "📥 Baixa Aqui",
+    "@QG_BALTIGO": "🏠 QG Baltigo",
+}
+
+
+def required_channel_url(channel: str) -> str:
+    channel = str(channel or "").strip()
+    if channel.startswith("@"):
+        return f"https://t.me/{channel[1:]}"
+    if channel.startswith(("http://", "https://")):
+        return channel
+    return f"https://t.me/{channel.lstrip('@')}"
+
+
+def required_channel_label(channel: str) -> str:
+    channel = str(channel or "").strip()
+    return REQUIRED_CHANNEL_LABELS.get(
+        channel,
+        f"📢 {channel.lstrip('@').replace('_', ' ').replace('-', ' ').title() or 'Canal'}",
+    )
+
+
+def required_channel_buttons() -> list[list[Button]]:
+    buttons = [
+        Button.url(required_channel_label(channel), required_channel_url(channel))
+        for channel in settings.required_channels
+    ]
+    return [buttons[index : index + 2] for index in range(0, len(buttons), 2)]
 
 
 async def ensure_required_channels(event) -> bool:
@@ -1082,7 +1113,7 @@ async def ensure_required_channels(event) -> bool:
     await send_html(
         event.chat_id,
         required_channel_gate_text(name),
-        buttons=[[Button.url("📢 Entrar nos canais", settings.required_channels_url)]],
+        buttons=required_channel_buttons(),
     )
     return False
 

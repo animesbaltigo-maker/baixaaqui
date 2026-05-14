@@ -87,6 +87,8 @@ bot_api = BotApiClient(settings.bot_token, settings.bot_api_base_url, settings.b
 store = PremiumStore(settings.data_dir / "premium.sqlite3")
 sessions = SessionManager(settings.session_ttl_seconds)
 rate_limiter = RateLimiter(settings.rate_limit_window_seconds, settings.rate_limit_max_events)
+callback_rate_limiter = RateLimiter(window_seconds=5, max_events=10)
+start_rate_limiter = RateLimiter(window_seconds=30, max_events=2)
 link_storage = LocalLinkStorage(settings.public_files_dir, settings.public_base_url, settings.default_link_ttl_hours)
 
 CONTROL_SECRET = os.getenv("CONTROL_SECRET", "")
@@ -188,6 +190,38 @@ def actor_id(event) -> int:
 
 def is_private_chat(event) -> bool:
     return bool(getattr(event, "is_private", False))
+
+
+async def public_rate_guard(event, language: str) -> None:
+    if rate_limiter.allow(actor_id(event)):
+        return
+    if is_private_chat(event):
+        await answer(event, "rate_limited", language)
+    raise events.StopPropagation
+
+
+async def callback_guard(event) -> bool:
+    await event.answer()
+    if callback_rate_limiter.allow(actor_id(event)):
+        return True
+    await event.answer("Devagar! Aguarde um momento.", alert=False)
+    return False
+
+
+async def delete_private_command(event) -> None:
+    if not is_private_chat(event):
+        return
+    try:
+        await event.delete()
+    except Exception:
+        return
+
+
+def user_url_dedupe_key(user_id: int, url: str | None) -> str | None:
+    if not url:
+        return None
+    digest = hashlib.md5(normalize_shared_url(url).encode("utf-8")).hexdigest()[:16]
+    return f"user-url:{user_id}:{digest}"
 
 
 def is_youtube_url(url: str) -> bool:
@@ -837,12 +871,53 @@ def quality_buttons(language: str, target: PendingTarget):
     return rows
 
 
+def main_menu(language: str):
+    return [
+        [Button.inline(tx(language, "btn_menu_download"), b"menu:download"), Button.inline(tx(language, "btn_menu_settings"), b"menu:settings")],
+        [Button.inline(tx(language, "btn_menu_tasks"), b"menu:tasks"), Button.inline(tx(language, "btn_menu_help"), b"menu:help")],
+        [Button.url(tx(language, "btn_menu_universe"), BALTIGO_UNIVERSE_WEBAPP_URL)],
+    ]
+
+
+def social_buttons(language: str, target: PendingTarget, profile: ContentProfile):
+    data = target.token
+    rows = []
+    if profile.kind == "image":
+        rows.append([Button.inline(tx(language, "btn_send_photo"), f"social:photo:{data}".encode())])
+        if local_image_link_available():
+            rows.append([Button.inline(tx(language, "btn_generate_link"), f"social:link:{data}".encode())])
+    elif profile.kind == "audio":
+        rows.append([Button.inline(tx(language, "btn_audio_send"), f"social:audiofile:{data}".encode())])
+        rows.append([Button.inline(tx(language, "btn_file"), f"social:file:{data}".encode())])
+        rows.append([Button.inline(tx(language, "btn_caption"), f"target:caption:{data}".encode())])
+    elif profile.kind == "album":
+        rows.append([Button.inline(tx(language, "btn_download_media"), f"social:download:{data}".encode())])
+        rows.append([Button.inline(tx(language, "btn_file"), f"social:file:{data}".encode())])
+        rows.append([Button.inline(tx(language, "btn_caption"), f"target:caption:{data}".encode()), Button.inline(tx(language, "btn_rename"), f"target:rename:{data}".encode())])
+    else:
+        if target.url and is_youtube_music_url(target.url):
+            rows.append([Button.inline(tx(language, "btn_audio_send"), f"social:audio:{data}".encode())])
+            rows.append([Button.inline(tx(language, "btn_file"), f"social:file:{data}".encode())])
+            rows.append([Button.inline(tx(language, "btn_caption"), f"target:caption:{data}".encode())])
+        else:
+            first_row = [Button.inline(tx(language, "btn_download_media"), f"social:video:{data}".encode())]
+            if profile.can_extract_audio:
+                first_row.append(Button.inline(tx(language, "btn_audio"), f"social:audio:{data}".encode()))
+            rows.append(first_row)
+            rows.append([Button.inline(tx(language, "btn_file"), f"social:file:{data}".encode())])
+            rows.append([Button.inline(tx(language, "btn_caption"), f"target:caption:{data}".encode()), Button.inline(tx(language, "btn_rename"), f"target:rename:{data}".encode())])
+    rows.append([Button.inline(tx(language, "btn_cancel"), f"target:cancel:{data}".encode())])
+    return rows
+
+
 def direct_buttons(language: str, target: PendingTarget, profile: ContentProfile):
     data = target.token
     rows = []
     if profile.can_send_photo:
-        rows.append([Button.inline(tx(language, "btn_send_photo"), f"direct:photo:{data}".encode()), Button.inline(tx(language, "btn_file"), f"direct:file:{data}".encode())])
-        rows.append([Button.inline(tx(language, "btn_generate_link"), f"direct:link:{data}".encode())])
+        rows.append([Button.inline(tx(language, "btn_send_photo"), f"direct:photo:{data}".encode())])
+        rows.append([Button.inline(tx(language, "btn_file"), f"direct:file:{data}".encode())])
+        if local_image_link_available():
+            rows.append([Button.inline(tx(language, "btn_generate_link"), f"direct:link:{data}".encode())])
     elif profile.can_send_video:
         rows.append([Button.inline(tx(language, "btn_video"), f"direct:video:{data}".encode()), Button.inline(tx(language, "btn_file"), f"direct:file:{data}".encode())])
     elif profile.can_send_audio:
@@ -863,7 +938,8 @@ def file_buttons(language: str, target: PendingTarget, profile: ContentProfile):
     ]
     if profile.can_send_photo:
         rows.append([Button.inline(tx(language, "btn_send_photo"), f"file:photo:{data}".encode()), Button.inline(tx(language, "btn_file"), f"file:file:{data}".encode())])
-        rows.append([Button.inline(tx(language, "btn_generate_link"), f"file:link:{data}".encode())])
+        if local_image_link_available():
+            rows.append([Button.inline(tx(language, "btn_generate_link"), f"file:link:{data}".encode())])
     elif profile.can_send_video:
         rows.append([Button.inline(tx(language, "btn_video"), f"file:video:{data}".encode()), Button.inline(tx(language, "btn_file"), f"file:file:{data}".encode())])
     elif profile.can_send_audio:
@@ -1137,6 +1213,20 @@ def required_channel_buttons(channels: list[str]) -> list[list[Button]]:
     return [buttons[index : index + 2] for index in range(0, len(buttons), 2)]
 
 
+def required_channel_gate_text(language: str, channels: list[str]) -> str:
+    channel_lines = "\n".join(f"• {h(required_channel_label(channel))}" for channel in channels)
+    return tx(language, "channels_required", channels=channel_lines)
+
+
+def required_channel_buttons(language: str, channels: list[str]) -> list[list[Button]]:
+    rows = [
+        [Button.url(f"➕ Entrar em {required_channel_label(channel)}", required_channel_url(channel))]
+        for channel in channels
+    ]
+    rows.append([Button.inline(tx(language, "check_channels_btn"), b"check_channels")])
+    return rows
+
+
 async def ensure_required_channels(event) -> bool:
     user_id = actor_id(event)
     if is_admin(user_id):
@@ -1145,12 +1235,11 @@ async def ensure_required_channels(event) -> bool:
     if not missing_channels:
         return True
 
-    sender = await event.get_sender()
-    name = getattr(sender, "first_name", None) or "amigo"
+    language = await language_for(event)
     await send_html(
         event.chat_id,
-        required_channel_gate_text(name),
-        buttons=required_channel_buttons(missing_channels),
+        required_channel_gate_text(language, missing_channels),
+        buttons=required_channel_buttons(language, missing_channels),
     )
     return False
 
@@ -1172,6 +1261,8 @@ async def control_block_guard_handler(event) -> None:
 
 @client.on(events.NewMessage(pattern=r"(?i)^/"))
 async def required_channel_command_guard(event) -> None:
+    if re.match(r"(?i)^/(start|iniciar)(?:@\w+)?$", event.raw_text or "") and not start_rate_limiter.allow(actor_id(event)):
+        raise events.StopPropagation
     if not await ensure_required_channels(event):
         raise events.StopPropagation
 
@@ -1179,6 +1270,7 @@ async def required_channel_command_guard(event) -> None:
 @client.on(events.NewMessage(pattern=r"(?i)^/(start|iniciar)(?:@\w+)?$"))
 async def start_handler(event) -> None:
     language = await language_for(event)
+    await public_rate_guard(event, language)
     if not await ensure_required_channels(event):
         return
     sender = await event.get_sender()
@@ -1189,21 +1281,24 @@ async def start_handler(event) -> None:
         caption=tx(language, "welcome", name=name),
         parse_mode="html",
         buttons=main_menu(language),
-        reply_to=getattr(event.message, "id", None),
     )
+    await delete_private_command(event)
 
 
 @client.on(events.NewMessage(pattern=r"(?i)^/(ajuda|help)(?:@\w+)?$"))
 async def help_handler(event) -> None:
     language = await language_for(event)
+    await public_rate_guard(event, language)
     if not await ensure_required_channels(event):
         return
     await answer(event, "help", language, buttons=main_menu(language))
+    await delete_private_command(event)
 
 
 @client.on(events.NewMessage(pattern=r"(?i)^/(mp3|audio)(?:@\w+)?(?:\s+(.+))?$"))
 async def mp3_handler(event) -> None:
     language = await language_for(event)
+    await public_rate_guard(event, language)
     if not await ensure_required_channels(event):
         return
     if not settings.social_download_enabled:
@@ -1243,6 +1338,7 @@ async def mp3_handler(event) -> None:
 @client.on(events.NewMessage(pattern=r"(?i)^/(config|settings)(?:@\w+)?$"))
 async def settings_handler(event) -> None:
     language = await language_for(event)
+    await public_rate_guard(event, language)
     if not await ensure_required_channels(event):
         return
     thumb = store.get_thumb(actor_id(event))
@@ -1254,24 +1350,32 @@ async def settings_handler(event) -> None:
         lang_name=language_label(language),
         thumb=tx(language, "state_on") if thumb else tx(language, "state_off"),
     )
+    await delete_private_command(event)
 
 
 @client.on(events.NewMessage(pattern=r"(?i)^/(cancelar|cancel|limpar)(?:@\w+)?$"))
 async def cancel_handler(event) -> None:
     language = await language_for(event)
+    await public_rate_guard(event, language)
     if not await ensure_required_channels(event):
         return
     user_id = actor_id(event)
+    had_session = user_id in sessions._sessions
     sessions.clear(user_id)
+    keys_to_remove = [key for key, value in pending_targets.items() if value.user_id == user_id]
+    for key in keys_to_remove:
+        pending_targets.pop(key, None)
     for task in active_tasks.get(user_id, set()):
         task.cancel()
     active_tasks.pop(user_id, None)
-    await answer(event, "context_cleaned", language)
+    await answer(event, "context_cleaned" if had_session else "nothing_to_cancel", language)
+    await delete_private_command(event)
 
 
 @client.on(events.NewMessage(pattern=r"(?i)^/(status|minhastarefas)(?:@\w+)?$"))
 async def tasks_handler(event) -> None:
     language = await language_for(event)
+    await public_rate_guard(event, language)
     if not await ensure_required_channels(event):
         return
     await send_html(event.chat_id, task_panel(language, actor_id(event)), buttons=back_buttons(language))
@@ -1279,13 +1383,17 @@ async def tasks_handler(event) -> None:
 
 @client.on(events.NewMessage(pattern=r"(?i)^/(planos|plans|premium)(?:@\w+)?$"))
 async def plans_handler(event) -> None:
+    language = await language_for(event)
+    await public_rate_guard(event, language)
     if not await ensure_required_channels(event):
         return
-    await send_html(event.chat_id, plan_catalog_text(), buttons=back_buttons(await language_for(event)))
+    await send_html(event.chat_id, plan_catalog_text(), buttons=back_buttons(language))
 
 
 @client.on(events.NewMessage(pattern=r"(?i)^/(plano|myplan)(?:@\w+)?$"))
 async def my_plan_handler(event) -> None:
+    language = await language_for(event)
+    await public_rate_guard(event, language)
     if not await ensure_required_channels(event):
         return
     sender = await event.get_sender()
@@ -2076,12 +2184,36 @@ async def ban_group_handler(event) -> None:
     await answer(event, "group_blocked", language, chat_id=chat_id)
 
 
+@client.on(events.CallbackQuery(pattern=b"^check_channels$"))
+async def check_channels_callback(event) -> None:
+    if not await callback_guard(event):
+        return
+    user_id = actor_id(event)
+    REQUIRED_CHANNEL_CACHE.pop(user_id, None)
+    language = await language_for(event)
+    if not await is_member_of_required_channels(user_id):
+        await event.answer(tx(language, "channels_still_missing"), alert=True)
+        return
+    await edit_html(await event.get_message(), tx(language, "channels_verified"))
+    await asyncio.sleep(1)
+    sender = await event.get_sender()
+    name = getattr(sender, "first_name", None) or "você"
+    await client.send_file(
+        event.chat_id,
+        BAIXAAQUI_START_BANNER_URL,
+        caption=tx(language, "welcome", name=name),
+        parse_mode="html",
+        buttons=main_menu(language),
+    )
+
+
 @client.on(events.CallbackQuery(pattern=b"^menu:"))
 async def menu_callback(event) -> None:
+    if not await callback_guard(event):
+        return
     language = await language_for(event)
     user_id = actor_id(event)
     action = event.data.decode("utf-8").split(":", 1)[1]
-    await event.answer()
     message = await event.get_message()
     if action == "home":
         sessions.clear(user_id)
@@ -2129,13 +2261,14 @@ async def menu_callback(event) -> None:
 
 @client.on(events.CallbackQuery(pattern=b"^plan:"))
 async def plan_callback(event) -> None:
+    if not await callback_guard(event):
+        return
     user_id = actor_id(event)
     sender = await event.get_sender()
     name = getattr(sender, "first_name", None) or "Usuario"
     parts = event.data.decode("utf-8").split(":")
     action = parts[1] if len(parts) > 1 else "refresh"
     message = await event.get_message()
-    await event.answer()
     if action == "view" and len(parts) >= 3:
         plan_key = normalize_plan_key(parts[2])
         await edit_html(message, render_plan_status(user_id, name, plan_key), buttons=plan_detail_buttons(plan_key))
@@ -2159,10 +2292,11 @@ async def plan_callback(event) -> None:
 
 @client.on(events.CallbackQuery(pattern=b"^settings:"))
 async def settings_callback(event) -> None:
+    if not await callback_guard(event):
+        return
     language = await language_for(event)
     action = event.data.decode("utf-8").split(":", 1)[1]
     message = await event.get_message()
-    await event.answer()
     if action == "language":
         await edit_html(message, tx(language, "settings_language"), buttons=language_buttons(language))
         return
@@ -2180,9 +2314,10 @@ async def settings_callback(event) -> None:
 
 @client.on(events.CallbackQuery(pattern=b"^lang:"))
 async def language_callback(event) -> None:
+    if not await callback_guard(event):
+        return
     language = normalize_language(event.data.decode("utf-8").split(":", 1)[1], settings.default_language)
     store.set_language(actor_id(event), language)
-    await event.answer()
     thumb = store.get_thumb(actor_id(event))
     await edit_html(
         await event.get_message(),
@@ -2193,13 +2328,14 @@ async def language_callback(event) -> None:
 
 @client.on(events.CallbackQuery(pattern=b"^thumb:"))
 async def thumb_menu_callback(event) -> None:
+    if not await callback_guard(event):
+        return
     language = await language_for(event)
     action = event.data.decode("utf-8").split(":", 1)[1]
     user_id = actor_id(event)
     message = await event.get_message()
     if action == "set":
         sessions.set_step(user_id, "save_default_thumb", {}, language)
-        await event.answer()
         await edit_html(message, tx(language, "thumb_default_request"), buttons=thumb_menu_buttons(language))
         return
     if action == "remove":
@@ -2207,19 +2343,19 @@ async def thumb_menu_callback(event) -> None:
         if thumb and thumb.exists():
             thumb.unlink(missing_ok=True)
         store.set_thumb(user_id, None)
-        await event.answer()
         await edit_html(message, tx(language, "thumb_removed"), buttons=thumb_menu_buttons(language))
         return
 
 
 @client.on(events.CallbackQuery(pattern=b"^target:"))
 async def target_callback(event) -> None:
+    if not await callback_guard(event):
+        return
     language = await language_for(event)
     user_id = actor_id(event)
     _, action, target_token = event.data.decode("utf-8").split(":", 2)
     target = get_target(target_token, user_id)
     if not target:
-        await event.answer()
         await edit_html(await event.get_message(), tx(language, "expired"))
         return
 
@@ -2227,56 +2363,51 @@ async def target_callback(event) -> None:
         pending_targets.pop(target_token, None)
         sessions.clear(user_id)
         cancel_tasks_for_target(target_token)
-        await event.answer()
         await edit_html(await event.get_message(), tx(language, "cancelled"))
         return
     if action == "rename":
         sessions.set_step(user_id, "rename_target", {"token": target_token}, language)
-        await event.answer()
         await send_html(event.chat_id, tx(language, "rename_request"))
         return
     if action == "caption":
         sessions.set_step(user_id, "caption_target", {"token": target_token}, language)
-        await event.answer()
         await send_html(event.chat_id, tx(language, "caption_request"))
         return
     if action == "thumb":
         sessions.set_step(user_id, "thumb_target", {"token": target_token}, language)
-        await event.answer()
         await send_html(event.chat_id, tx(language, "thumb_request"))
 
 
 @client.on(events.CallbackQuery(pattern=b"^direct:"))
 async def direct_callback(event) -> None:
+    if not await callback_guard(event):
+        return
     language = await language_for(event)
     user_id = actor_id(event)
     _, action, target_token = event.data.decode("utf-8").split(":", 2)
     target = get_target(target_token, user_id)
     if not target:
-        await event.answer()
         await edit_html(await event.get_message(), tx(language, "expired"))
         return
     if action == "link":
-        await event.answer()
         await schedule_link_job(event, target, status=await event.get_message())
         return
     mode: UploadMode = {"file": "document", "video": "video", "audio": "audio", "photo": "photo"}.get(action, "document")  # type: ignore[assignment]
-    await event.answer()
     await schedule_job(event, replace(target, source="direct", filename=target.filename), mode=mode, status=await event.get_message())
 
 
 @client.on(events.CallbackQuery(pattern=b"^social:"))
 async def social_callback(event) -> None:
+    if not await callback_guard(event):
+        return
     language = await language_for(event)
     user_id = actor_id(event)
     _, action, target_token = event.data.decode("utf-8").split(":", 2)
     target = get_target(target_token, user_id)
     if not target:
-        await event.answer()
         await edit_html(await event.get_message(), tx(language, "expired"))
         return
     if action == "link":
-        await event.answer()
         await schedule_link_job(event, replace(target, source="social:link"), status=await event.get_message())
         return
     mode: UploadMode = {
@@ -2287,22 +2418,21 @@ async def social_callback(event) -> None:
         "file": "document",
         "photo": "photo",
     }.get(action, "auto")
-    await event.answer()
     await schedule_job(event, replace(target, source=f"social:{action}"), mode=mode, status=await event.get_message())
 
 
 @client.on(events.CallbackQuery(pattern=b"^quality:"))
 async def quality_callback(event) -> None:
+    if not await callback_guard(event):
+        return
     language = await language_for(event)
     user_id = actor_id(event)
     _, quality, target_token = event.data.decode("utf-8").split(":", 2)
     target = get_target(target_token, user_id)
     if not target:
-        await event.answer()
         await edit_html(await event.get_message(), tx(language, "expired"))
         return
 
-    await event.answer()
     await schedule_job(
         event,
         replace(target, source="social:video", format_selector=format_selector_for_quality(quality)),
@@ -2314,37 +2444,32 @@ async def quality_callback(event) -> None:
 
 @client.on(events.CallbackQuery(pattern=b"^file:"))
 async def file_callback(event) -> None:
+    if not await callback_guard(event):
+        return
     language = await language_for(event)
     user_id = actor_id(event)
     _, action, target_token = event.data.decode("utf-8").split(":", 2)
     target = get_target(target_token, user_id)
     if not target:
-        await event.answer()
         await edit_html(await event.get_message(), tx(language, "expired"))
         return
 
     if action == "link":
-        await event.answer()
         await schedule_link_job(event, target, status=await event.get_message())
         return
     if action == "photo":
-        await event.answer()
         await schedule_job(event, replace(target, source="telegram_file"), mode="photo", status=await event.get_message())
         return
     if action == "video":
-        await event.answer()
         await schedule_job(event, replace(target, source="telegram_file"), mode="video", status=await event.get_message())
         return
     if action == "audio":
-        await event.answer()
         await schedule_job(event, replace(target, source="telegram_file"), mode="audio", status=await event.get_message())
         return
     if action == "file":
-        await event.answer()
         await schedule_job(event, replace(target, source="telegram_file"), mode="document", status=await event.get_message())
         return
     if action in {"pdf", "cbz", "epub"}:
-        await event.answer()
         await schedule_job(
             event,
             replace(target, source="telegram_file", conversion=action),
@@ -2353,50 +2478,50 @@ async def file_callback(event) -> None:
         )
         return
     if action == "savethumb":
-        await event.answer()
         await save_default_thumbnail(target, language, await event.get_message())
         return
     if action == "tempthumb":
         sessions.set_step(user_id, "temp_thumb_saved", {"thumb_message_id": target.message_id}, language)
-        await event.answer()
         await edit_html(await event.get_message(), tx(language, "thumb_saved"))
 
 
 @client.on(events.CallbackQuery(pattern=b"^link:delete:"))
 async def delete_link_callback(event) -> None:
+    if not await callback_guard(event):
+        return
     language = await language_for(event)
     link_id = event.data.decode("utf-8").split(":", 2)[2]
     path = store.delete_link(link_id, actor_id(event))
     if path:
         link_storage.delete(Path(path))
-    await event.answer()
     await edit_html(await event.get_message(), tx(language, "link_deleted"))
 
 
 @client.on(events.CallbackQuery(pattern=b"^job:cancel:"))
 async def cancel_job_callback(event) -> None:
+    if not await callback_guard(event):
+        return
     language = await language_for(event)
     job_id = event.data.decode("utf-8").split(":", 2)[2]
     for tasks in active_tasks.values():
         for task in tasks:
             if getattr(task, "job_id", None) == job_id:
                 task.cancel()
-    await event.answer()
     await edit_html(await event.get_message(), tx(language, "cancelled"))
 
 
 @client.on(events.CallbackQuery(pattern=b"^retry:"))
 async def retry_callback(event) -> None:
+    if not await callback_guard(event):
+        return
     language = await language_for(event)
     user_id = actor_id(event)
     target_token = event.data.decode("utf-8").split(":", 1)[1]
     target = get_target(target_token, user_id)
     if not target:
-        await event.answer()
         await edit_html(await event.get_message(), tx(language, "expired"))
         return
 
-    await event.answer()
     status = await event.get_message()
     if target.source == "link":
         await schedule_link_job(event, target, status=status)
@@ -2418,9 +2543,21 @@ async def retry_callback(event) -> None:
     await schedule_job(event, target, mode=mode, status=status)
 
 
+@client.on(events.NewMessage(pattern=r"(?i)^/(?!start|iniciar|help|ajuda|mp3|audio|cancelar|cancel|limpar|config|settings|status|minhastarefas|planos|plans|premium|plano|myplan|liberar|release|setplan|broadcast|bc|health|debug|diagnostico|diagnóstico|allowgroup|bangroup|blockgroup)"))
+async def unknown_command_handler(event) -> None:
+    if not is_private_chat(event):
+        return
+    language = await language_for(event)
+    await public_rate_guard(event, language)
+    await send_html(event.chat_id, tx(language, "unknown_command"))
+    await delete_private_command(event)
+
+
 @client.on(events.NewMessage(incoming=True))
 async def route_message(event) -> None:
     if not event.message:
+        return
+    if getattr(event, "out", False):
         return
     language = await language_for(event)
     user_id = actor_id(event)
@@ -2457,7 +2594,7 @@ async def route_message(event) -> None:
         if contains_url(text):
             url = extract_url(text) or text.strip()
             url = normalize_shared_url(url)
-            if is_social_url(url) or is_drive_url(url):
+            if is_social_url(url) or is_drive_url(url) or is_public_http_url(url):
                 await analyze_link(event, url, language)
         return
 
@@ -2668,16 +2805,21 @@ async def inspect_social(url: str) -> SocialInfo:
 
 
 def social_card(language: str, info: SocialInfo) -> str:
-    return tx(
-        language,
-        "social_card",
-        kind=_social_kind(language, info.media_type),
-        author=info.author or tx(language, "unknown_value"),
-        title=info.title or tx(language, "unknown_title"),
-        duration=format_duration(language, info.duration),
-        items=info.item_count,
-        quality=info.quality or tx(language, "quality_auto"),
-    )
+    lines = [f"<b>{tx(language, 'social_card_title')}</b>"]
+    kind = _social_kind(language, info.media_type)
+    if kind:
+        lines.append(f"🎬 {h(kind)}")
+    if info.title:
+        lines.append(f"📌 {h(info.title)}")
+    if info.author:
+        lines.append(f"👤 {h(info.author)}")
+    if info.duration:
+        lines.append(f"⏱️ {format_duration(language, info.duration)}")
+    if info.quality:
+        lines.append(f"🎞️ {h(info.quality)}")
+    if info.item_count and info.item_count > 1:
+        lines.append(f"📦 {info.item_count} itens")
+    return "\n".join(lines)
 
 
 def direct_card(language: str, info: RemoteFileInfo) -> str:
@@ -2729,6 +2871,19 @@ async def schedule_job(event, target: PendingTarget, mode: UploadMode, status=No
         if not silent:
             await edit_or_send(event, status, tx(language, "rate_limited"))
         return
+    dedupe_key = user_url_dedupe_key(user_id, target.url)
+    if dedupe_key:
+        current_lock = download_dedupe.get(dedupe_key)
+        if current_lock and not current_lock.locked():
+            download_dedupe.pop(dedupe_key, None)
+            current_lock = None
+        if current_lock:
+            if not silent:
+                await edit_or_send(event, status, tx(language, "already_downloading"))
+            return
+        current_lock = asyncio.Lock()
+        await current_lock.acquire()
+        download_dedupe[dedupe_key] = current_lock
 
     job_id = uuid.uuid4().hex[:12]
     logger.info("job_queue kind=%s user_id=%s chat_id=%s job_id=%s", target.source, user_id, target.chat_id, job_id)
@@ -2923,6 +3078,7 @@ async def run_media_job(job_id: str, target: PendingTarget, mode: UploadMode, st
     started_at = time.perf_counter()
     download_ms = 0.0
     upload_ms = 0.0
+    dedupe_key = user_url_dedupe_key(target.user_id, target.url)
     try:
         logger.info("job_start job_id=%s kind=%s user_id=%s mode=%s", job_id, target.source, target.user_id, mode)
         store.update_job(job_id, "running")
@@ -2934,10 +3090,7 @@ async def run_media_job(job_id: str, target: PendingTarget, mode: UploadMode, st
                 fast_size = int(target.direct_info.size or 0) if target.direct_info else 0
                 store.update_job(job_id, "done", bytes_in=fast_size, bytes_out=fast_size)
                 logger.info("job_done_fast job_id=%s kind=%s user_id=%s total_ms=%d", job_id, target.source, target.user_id, int((time.perf_counter() - started_at) * 1000))
-                if ephemeral:
-                    await delete_status(status)
-                else:
-                    await edit_status(status, tx(language, "done"))
+                await delete_status(status)
                 pending_targets.pop(target.token, None)
                 return
             await edit_status(
@@ -2997,10 +3150,7 @@ async def run_media_job(job_id: str, target: PendingTarget, mode: UploadMode, st
             int(download_ms),
             int(upload_ms),
         )
-        if ephemeral:
-            await delete_status(status)
-        else:
-            await edit_status(status, tx(language, "done"))
+        await delete_status(status)
         pending_targets.pop(target.token, None)
     except asyncio.CancelledError:
         store.update_job(job_id, "cancelled")
@@ -3024,6 +3174,11 @@ async def run_media_job(job_id: str, target: PendingTarget, mode: UploadMode, st
         if not silent:
             await edit_status(status, tx(language, "error_human", reason=tx(language, "unexpected_media_error")))
     finally:
+        if dedupe_key:
+            lock = download_dedupe.get(dedupe_key)
+            if lock and lock.locked():
+                lock.release()
+            download_dedupe.pop(dedupe_key, None)
         shutil.rmtree(job_dir, ignore_errors=True)
 
 
@@ -3043,10 +3198,7 @@ async def try_cached_file_send(job_id: str, target: PendingTarget, mode: UploadM
         )
         store.update_job(job_id, "done")
         logger.info("job_file_id_cache_hit job_id=%s kind=%s user_id=%s mode=%s", job_id, target.source, target.user_id, cached["mode"])
-        if ephemeral:
-            await delete_status(status)
-        else:
-            await edit_status(status, tx(language, "done"))
+        await delete_status(status)
         pending_targets.pop(target.token, None)
         return True
     except Exception as exc:

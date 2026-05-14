@@ -474,6 +474,123 @@ TEXTS["pt"].update(
     }
 )
 
+TEXTS["pt"].update(
+    {
+        "welcome": (
+            "👋 <b>Olá, {name}!</b>\n\n"
+            "Me mande o link de qualquer vídeo, música ou imagem "
+            "e eu baixo pra você — sem marca d'água, com qualidade.\n\n"
+            "<b>Funciona com:</b> TikTok, Instagram, YouTube, Spotify, "
+            "Facebook, X/Twitter, Pinterest, SoundCloud e muito mais.\n\n"
+            "<i>É só mandar o link aqui no chat. 👇</i>"
+        ),
+        "help": (
+            "<b>Como usar</b>\n\n"
+            "1️⃣ Cole o link de um vídeo, música ou imagem\n"
+            "2️⃣ Escolha a qualidade ou formato\n"
+            "3️⃣ Receba o arquivo direto no chat\n\n"
+            "<b>Plataformas suportadas:</b>\n"
+            "🎥 TikTok • Instagram • YouTube • Facebook • X/Twitter • Kwai • Pinterest • Crunchyroll\n"
+            "🎵 Spotify • YouTube Music • SoundCloud • Deezer\n"
+            "📸 Fotos do Instagram, TikTok e Pinterest\n\n"
+            "<b>Comandos:</b>\n"
+            "/mp3 [link] — baixar só o áudio\n"
+            "/cancelar — limpar tarefa atual\n"
+            "/plano — ver seu plano atual"
+        ),
+        "menu_title": "<b>SourceBaltigo Downloader</b>\n<i>Envie um link ou escolha uma opção.</i>",
+        "menu_download": "<b>Baixar</b>\n<i>Envie o link de um vídeo, música ou imagem.</i>",
+        "menu_upload": "<b>Enviar por URL</b>\n<i>Envie uma URL direta de arquivo.</i>",
+        "menu_tools": "<b>Ferramentas</b>\n<i>Envie uma mídia para renomear, editar legenda, definir capa ou converter.</i>",
+        "rate_limited": (
+            "⏸️ <b>Calma aí!</b>\n\n"
+            "<i>Muitas ações em pouco tempo. Aguarde alguns segundos e tente de novo.</i>"
+        ),
+        "analyzing_link": "🔍 Analisando...",
+        "analyze_failed": "❌ Não consegui acessar esse link.\n<i>Verifique se ele está correto e tente novamente.</i>",
+        "direct_link_required": "⚠️ Esse link não é um download direto.\n<i>Envie um link de vídeo, música ou imagem de uma plataforma suportada.</i>",
+        "stage_analyzing": "🔍 Analisando...",
+        "stage_preparing": "⚙️ Preparando...",
+        "stage_downloading": "⬇️ Baixando {progress}",
+        "stage_converting": "🔄 Convertendo...",
+        "stage_uploading": "⬆️ Enviando {progress}",
+        "stage_linking": "🔗 Gerando link...",
+        "done": "✅ Pronto!",
+        "error_human": "❌ <b>Não consegui concluir</b>\n\n{reason}\n\n<i>Tente novamente ou envie outro link.</i>",
+        "expired": "⏰ <b>Essa ação expirou</b>\n<i>Envie o link novamente para continuar.</i>",
+        "already_downloading": "⏳ <b>Já estou baixando esse link para você.</b>\n<i>Aguarde o resultado anterior terminar.</i>",
+        "nothing_to_cancel": "✅ Nenhuma tarefa ativa no momento.",
+        "unknown_command": "🤔 Não conheço esse comando.\n\nUse /help para ver o que posso fazer.",
+        "channels_verified": "✅ <b>Verificado!</b>\n<i>Bem-vindo ao bot.</i>",
+        "channels_required": "👋 Para usar o bot, entre nos canais abaixo:\n\n{channels}\n\n<i>Depois clique em \"Já entrei\" para liberar o acesso.</i>",
+        "channels_still_missing": "Você ainda não entrou em todos os canais.",
+        "download_taking_long": "⏳ <b>Isso está demorando mais que o esperado...</b>\n<i>Ainda estou tentando. Aguarde mais um pouco.</i>",
+        "social_card_title": "Mídia encontrada",
+        "check_channels_btn": "✅ Já entrei, verificar",
+        "btn_menu_download": "📥 Baixar",
+        "btn_menu_tasks": "🗂️ Minhas tarefas",
+        "btn_menu_settings": "⚙️ Configurações",
+        "btn_menu_help": "❓ Ajuda",
+        "btn_menu_universe": "⚔️ Universo Baltigo",
+    }
+)
+
+TEXTS["en"].update(
+    {
+        "welcome": (
+            "👋 <b>Hello, {name}!</b>\n\n"
+            "Send me any video, music, or image link and I will download it for you "
+            "with clean quality.\n\n"
+            "<b>Works with:</b> TikTok, Instagram, YouTube, Spotify, Facebook, "
+            "X/Twitter, Pinterest, SoundCloud, and more.\n\n"
+            "<i>Just send the link here in chat. 👇</i>"
+        ),
+        "help": (
+            "<b>How to use</b>\n\n"
+            "1️⃣ Paste a video, music, or image link\n"
+            "2️⃣ Choose quality or format\n"
+            "3️⃣ Receive the file directly in chat\n\n"
+            "<b>Supported platforms:</b>\n"
+            "🎥 TikTok • Instagram • YouTube • Facebook • X/Twitter • Kwai • Pinterest • Crunchyroll\n"
+            "🎵 Spotify • YouTube Music • SoundCloud • Deezer\n"
+            "📸 Instagram, TikTok, and Pinterest photos\n\n"
+            "<b>Commands:</b>\n"
+            "/mp3 [link] — download audio only\n"
+            "/cancel — clear current task\n"
+            "/myplan — view your current plan"
+        ),
+        "menu_title": "<b>SourceBaltigo Downloader</b>\n<i>Send a link or choose an option.</i>",
+        "menu_download": "<b>Download</b>\n<i>Send a video, music, or image link.</i>",
+        "rate_limited": "⏸️ <b>Slow down!</b>\n\n<i>Too many actions in a short time. Wait a few seconds and try again.</i>",
+        "analyzing_link": "🔍 Analyzing...",
+        "analyze_failed": "❌ I could not access that link.\n<i>Check it and try again.</i>",
+        "direct_link_required": "⚠️ That link is not a direct download.\n<i>Send a video, music, or image link from a supported platform.</i>",
+        "stage_analyzing": "🔍 Analyzing...",
+        "stage_preparing": "⚙️ Preparing...",
+        "stage_downloading": "⬇️ Downloading {progress}",
+        "stage_converting": "🔄 Converting...",
+        "stage_uploading": "⬆️ Uploading {progress}",
+        "stage_linking": "🔗 Creating link...",
+        "done": "✅ Done!",
+        "error_human": "❌ <b>I could not finish</b>\n\n{reason}\n\n<i>Try again or send another link.</i>",
+        "expired": "⏰ <b>This action expired</b>\n<i>Send the link again to continue.</i>",
+        "already_downloading": "⏳ <b>Already downloading that link for you.</b>\n<i>Wait for the previous result.</i>",
+        "nothing_to_cancel": "✅ No active tasks at the moment.",
+        "unknown_command": "🤔 I don't know that command.\n\nUse /help to see what I can do.",
+        "channels_verified": "✅ <b>Verified!</b>\n<i>Welcome to the bot.</i>",
+        "channels_required": "👋 To use the bot, join the channels below:\n\n{channels}\n\n<i>Then click \"I joined\" to unlock access.</i>",
+        "channels_still_missing": "You still have not joined all channels.",
+        "download_taking_long": "⏳ <b>This is taking longer than expected...</b>\n<i>Still trying. Please wait a little longer.</i>",
+        "social_card_title": "Media found",
+        "check_channels_btn": "✅ I joined, verify",
+        "btn_menu_download": "📥 Download",
+        "btn_menu_tasks": "🗂️ My tasks",
+        "btn_menu_settings": "⚙️ Settings",
+        "btn_menu_help": "❓ Help",
+        "btn_menu_universe": "⚔️ Baltigo Universe",
+    }
+)
+
 TEXTS["en"].update(
     {
         "welcome": (
@@ -640,6 +757,120 @@ TEXTS["es"].update(
     }
 )
 
+
+TEXTS["pt"].update(
+    {
+        "welcome": (
+            "\U0001f44b <b>Olá, {name}!</b>\n\n"
+            "Me mande o link de qualquer vídeo, música ou imagem "
+            "e eu baixo pra você — sem marca d'água, com qualidade.\n\n"
+            "<b>Funciona com:</b> TikTok, Instagram, YouTube, Spotify, "
+            "Facebook, X/Twitter, Pinterest, SoundCloud e muito mais.\n\n"
+            "<i>É só mandar o link aqui no chat. \U0001f447</i>"
+        ),
+        "help": (
+            "<b>Como usar</b>\n\n"
+            "1️⃣ Cole o link de um vídeo, música ou imagem\n"
+            "2️⃣ Escolha a qualidade ou formato\n"
+            "3️⃣ Receba o arquivo direto no chat\n\n"
+            "<b>Plataformas suportadas:</b>\n"
+            "\U0001f3a5 TikTok • Instagram • YouTube • Facebook • X/Twitter • Kwai • Pinterest • Crunchyroll\n"
+            "\U0001f3b5 Spotify • YouTube Music • SoundCloud • Deezer\n"
+            "\U0001f4f8 Fotos do Instagram, TikTok e Pinterest\n\n"
+            "<b>Comandos:</b>\n"
+            "/mp3 [link] — baixar só o áudio\n"
+            "/cancelar — limpar tarefa atual\n"
+            "/plano — ver seu plano atual"
+        ),
+        "menu_title": "<b>SourceBaltigo Downloader</b>\n<i>Envie um link ou escolha uma opção.</i>",
+        "menu_download": "<b>Baixar</b>\n<i>Envie o link de um vídeo, música ou imagem.</i>",
+        "menu_upload": "<b>Enviar por URL</b>\n<i>Envie uma URL direta de arquivo.</i>",
+        "menu_tools": "<b>Ferramentas</b>\n<i>Envie uma mídia para renomear, editar legenda, definir capa ou converter.</i>",
+        "rate_limited": "⏸️ <b>Calma aí!</b>\n\n<i>Muitas ações em pouco tempo. Aguarde alguns segundos e tente de novo.</i>",
+        "analyzing_link": "🔍 Analisando...",
+        "analyze_failed": "❌ Não consegui acessar esse link.\n<i>Verifique se ele está correto e tente novamente.</i>",
+        "direct_link_required": "⚠️ Esse link não é um download direto.\n<i>Envie um link de vídeo, música ou imagem de uma plataforma suportada.</i>",
+        "stage_analyzing": "🔍 Analisando...",
+        "stage_preparing": "⚙️ Preparando...",
+        "stage_downloading": "⬇️ Baixando {progress}",
+        "stage_converting": "🔄 Convertendo...",
+        "stage_uploading": "⬆️ Enviando {progress}",
+        "stage_linking": "🔗 Gerando link...",
+        "done": "✅ Pronto!",
+        "error_human": "❌ <b>Não consegui concluir</b>\n\n{reason}\n\n<i>Tente novamente ou envie outro link.</i>",
+        "expired": "⏰ <b>Essa ação expirou</b>\n<i>Envie o link novamente para continuar.</i>",
+        "already_downloading": "⏳ <b>Já estou baixando esse link para você.</b>\n<i>Aguarde o resultado anterior terminar.</i>",
+        "nothing_to_cancel": "✅ Nenhuma tarefa ativa no momento.",
+        "unknown_command": "🤔 Não conheço esse comando.\n\nUse /help para ver o que posso fazer.",
+        "channels_verified": "✅ <b>Verificado!</b>\n<i>Bem-vindo ao bot.</i>",
+        "channels_required": "👋 Para usar o bot, entre nos canais abaixo:\n\n{channels}\n\n<i>Depois clique em \"Já entrei\" para liberar o acesso.</i>",
+        "channels_still_missing": "Você ainda não entrou em todos os canais.",
+        "download_taking_long": "⏳ <b>Isso está demorando mais que o esperado...</b>\n<i>Ainda estou tentando. Aguarde mais um pouco.</i>",
+        "social_card_title": "Mídia encontrada",
+        "check_channels_btn": "✅ Já entrei, verificar",
+        "btn_menu_download": "📥 Baixar",
+        "btn_menu_tasks": "🗂️ Minhas tarefas",
+        "btn_menu_settings": "⚙️ Configurações",
+        "btn_menu_help": "❓ Ajuda",
+        "btn_menu_universe": "⚔️ Universo Baltigo",
+    }
+)
+
+TEXTS["en"].update(
+    {
+        "welcome": (
+            "\U0001f44b <b>Hello, {name}!</b>\n\n"
+            "Send me any video, music, or image link and I will download it for you "
+            "with clean quality.\n\n"
+            "<b>Works with:</b> TikTok, Instagram, YouTube, Spotify, Facebook, "
+            "X/Twitter, Pinterest, SoundCloud, and more.\n\n"
+            "<i>Just send the link here in chat. \U0001f447</i>"
+        ),
+        "help": (
+            "<b>How to use</b>\n\n"
+            "1️⃣ Paste a video, music, or image link\n"
+            "2️⃣ Choose quality or format\n"
+            "3️⃣ Receive the file directly in chat\n\n"
+            "<b>Supported platforms:</b>\n"
+            "\U0001f3a5 TikTok • Instagram • YouTube • Facebook • X/Twitter • Kwai • Pinterest • Crunchyroll\n"
+            "\U0001f3b5 Spotify • YouTube Music • SoundCloud • Deezer\n"
+            "\U0001f4f8 Instagram, TikTok, and Pinterest photos\n\n"
+            "<b>Commands:</b>\n"
+            "/mp3 [link] — download audio only\n"
+            "/cancel — clear current task\n"
+            "/myplan — view your current plan"
+        ),
+        "menu_title": "<b>SourceBaltigo Downloader</b>\n<i>Send a link or choose an option.</i>",
+        "menu_download": "<b>Download</b>\n<i>Send a video, music, or image link.</i>",
+        "rate_limited": "⏸️ <b>Slow down!</b>\n\n<i>Too many actions in a short time. Wait a few seconds and try again.</i>",
+        "analyzing_link": "🔍 Analyzing...",
+        "analyze_failed": "❌ I could not access that link.\n<i>Check it and try again.</i>",
+        "direct_link_required": "⚠️ That link is not a direct download.\n<i>Send a video, music, or image link from a supported platform.</i>",
+        "stage_analyzing": "🔍 Analyzing...",
+        "stage_preparing": "⚙️ Preparing...",
+        "stage_downloading": "⬇️ Downloading {progress}",
+        "stage_converting": "🔄 Converting...",
+        "stage_uploading": "⬆️ Uploading {progress}",
+        "stage_linking": "🔗 Creating link...",
+        "done": "✅ Done!",
+        "error_human": "❌ <b>I could not finish</b>\n\n{reason}\n\n<i>Try again or send another link.</i>",
+        "expired": "⏰ <b>This action expired</b>\n<i>Send the link again to continue.</i>",
+        "already_downloading": "⏳ <b>Already downloading that link for you.</b>\n<i>Wait for the previous result.</i>",
+        "nothing_to_cancel": "✅ No active tasks at the moment.",
+        "unknown_command": "🤔 I don't know that command.\n\nUse /help to see what I can do.",
+        "channels_verified": "✅ <b>Verified!</b>\n<i>Welcome to the bot.</i>",
+        "channels_required": "👋 To use the bot, join the channels below:\n\n{channels}\n\n<i>Then click \"I joined\" to unlock access.</i>",
+        "channels_still_missing": "You still have not joined all channels.",
+        "download_taking_long": "⏳ <b>This is taking longer than expected...</b>\n<i>Still trying. Please wait a little longer.</i>",
+        "social_card_title": "Media found",
+        "check_channels_btn": "✅ I joined, verify",
+        "btn_menu_download": "📥 Download",
+        "btn_menu_tasks": "🗂️ My tasks",
+        "btn_menu_settings": "⚙️ Settings",
+        "btn_menu_help": "❓ Help",
+        "btn_menu_universe": "⚔️ Baltigo Universe",
+    }
+)
 
 for lang in ("en", "es"):
     for key, value in TEXTS["pt"].items():

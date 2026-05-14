@@ -24,6 +24,7 @@ from zoneinfo import ZoneInfo
 from aiohttp import web
 from telethon import Button, TelegramClient, events, utils
 from telethon.errors import FloodWaitError
+from telethon.errors.rpcerrorlist import UserNotParticipantError
 from telethon.tl.functions.channels import GetFullChannelRequest
 from telethon.tl.types import DocumentAttributeVideo
 
@@ -136,6 +137,9 @@ IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 CONVERTIBLE_SUFFIXES = {".pdf", ".cbz", ".epub"}
 IMAGE_LINK_CACHE_TTL_SECONDS = max(60, min(300, settings.metadata_cache_ttl_seconds))
 LOCAL_IMAGE_LINK_TTL_SECONDS = 600
+REQUIRED_CHANNEL_CACHE: dict[int, tuple[bool, float]] = {}
+REQUIRED_CHANNEL_MEMBER_TTL = 300
+REQUIRED_CHANNEL_NON_MEMBER_TTL = 60
 
 
 @dataclass(frozen=True)
@@ -1018,6 +1022,71 @@ def active_count(user_id: int) -> int:
     return len(tasks)
 
 
+def required_channel_cache_get(user_id: int) -> bool | None:
+    item = REQUIRED_CHANNEL_CACHE.get(user_id)
+    if not item:
+        return None
+    allowed, expires_at = item
+    if time.time() >= expires_at:
+        REQUIRED_CHANNEL_CACHE.pop(user_id, None)
+        return None
+    return allowed
+
+
+def required_channel_cache_set(user_id: int, allowed: bool) -> None:
+    ttl = REQUIRED_CHANNEL_MEMBER_TTL if allowed else REQUIRED_CHANNEL_NON_MEMBER_TTL
+    REQUIRED_CHANNEL_CACHE[user_id] = (allowed, time.time() + ttl)
+
+
+async def is_member_of_required_channels(user_id: int) -> bool:
+    if not settings.required_channels:
+        return True
+
+    cached = required_channel_cache_get(user_id)
+    if cached is not None:
+        return cached
+
+    for channel in settings.required_channels:
+        try:
+            await client.get_permissions(channel, user_id)
+        except UserNotParticipantError:
+            required_channel_cache_set(user_id, False)
+            return False
+        except Exception:
+            logger.exception("required_channel_check_failed channel=%s user_id=%s", channel, user_id)
+            required_channel_cache_set(user_id, False)
+            return False
+
+    required_channel_cache_set(user_id, True)
+    return True
+
+
+def required_channel_gate_text(name: str) -> str:
+    return (
+        f"🛑 <b>Calma aí, {h(name or 'amigo')}</b>\n\n"
+        "Para usar este comando, você precisa entrar nos meus canais primeiro.\n\n"
+        "Assim você fica por dentro das novidades, avisos e atualizações.\n\n"
+        "Clique abaixo, entre nos canais da pasta e volte para tentar novamente."
+    )
+
+
+async def ensure_required_channels(event) -> bool:
+    user_id = actor_id(event)
+    if is_admin(user_id):
+        return True
+    if await is_member_of_required_channels(user_id):
+        return True
+
+    sender = await event.get_sender()
+    name = getattr(sender, "first_name", None) or "amigo"
+    await send_html(
+        event.chat_id,
+        required_channel_gate_text(name),
+        buttons=[[Button.url("📢 Entrar nos canais", settings.required_channels_url)]],
+    )
+    return False
+
+
 def cancel_tasks_for_target(target_token: str) -> int:
     cancelled = 0
     for tasks in active_tasks.values():
@@ -1036,6 +1105,8 @@ async def control_block_guard_handler(event) -> None:
 @client.on(events.NewMessage(pattern=r"(?i)^/(start|iniciar)(?:@\w+)?$"))
 async def start_handler(event) -> None:
     language = await language_for(event)
+    if not await ensure_required_channels(event):
+        return
     sender = await event.get_sender()
     name = getattr(sender, "first_name", None) or "tudo bem"
     await client.send_file(
@@ -1051,12 +1122,16 @@ async def start_handler(event) -> None:
 @client.on(events.NewMessage(pattern=r"(?i)^/(ajuda|help)(?:@\w+)?$"))
 async def help_handler(event) -> None:
     language = await language_for(event)
+    if not await ensure_required_channels(event):
+        return
     await answer(event, "help", language, buttons=main_menu(language))
 
 
 @client.on(events.NewMessage(pattern=r"(?i)^/(config|settings)(?:@\w+)?$"))
 async def settings_handler(event) -> None:
     language = await language_for(event)
+    if not await ensure_required_channels(event):
+        return
     thumb = store.get_thumb(actor_id(event))
     await answer(
         event,
@@ -1071,6 +1146,8 @@ async def settings_handler(event) -> None:
 @client.on(events.NewMessage(pattern=r"(?i)^/(cancelar|cancel|limpar)(?:@\w+)?$"))
 async def cancel_handler(event) -> None:
     language = await language_for(event)
+    if not await ensure_required_channels(event):
+        return
     user_id = actor_id(event)
     sessions.clear(user_id)
     for task in active_tasks.get(user_id, set()):
@@ -1082,16 +1159,22 @@ async def cancel_handler(event) -> None:
 @client.on(events.NewMessage(pattern=r"(?i)^/(status|minhastarefas)(?:@\w+)?$"))
 async def tasks_handler(event) -> None:
     language = await language_for(event)
+    if not await ensure_required_channels(event):
+        return
     await send_html(event.chat_id, task_panel(language, actor_id(event)), buttons=back_buttons(language))
 
 
 @client.on(events.NewMessage(pattern=r"(?i)^/(planos|plans|premium)(?:@\w+)?$"))
 async def plans_handler(event) -> None:
+    if not await ensure_required_channels(event):
+        return
     await send_html(event.chat_id, plan_catalog_text(), buttons=back_buttons(await language_for(event)))
 
 
 @client.on(events.NewMessage(pattern=r"(?i)^/(plano|myplan)(?:@\w+)?$"))
 async def my_plan_handler(event) -> None:
+    if not await ensure_required_channels(event):
+        return
     sender = await event.get_sender()
     name = getattr(sender, "first_name", None) or "Usuario"
     await send_html(event.chat_id, render_plan_status(actor_id(event), name), buttons=plan_buttons())
@@ -2231,6 +2314,8 @@ async def route_message(event) -> None:
     private_chat = is_private_chat(event)
     sender = await event.get_sender()
     if not private_chat and getattr(sender, "bot", False):
+        return
+    if private_chat and not await ensure_required_channels(event):
         return
     if maintenance_mode and not is_admin(user_id):
         await answer(event, "maintenance", language)

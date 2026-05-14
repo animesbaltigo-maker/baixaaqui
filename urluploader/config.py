@@ -81,6 +81,8 @@ class Settings:
     bot_brand_name: str
     bot_support_username: str
     bot_footer_text: str
+    required_channels: tuple[str, ...]
+    required_channels_url: str
 
     @property
     def is_local_bot_api(self) -> bool:
@@ -123,6 +125,12 @@ def _ids_from_env(name: str) -> set[int]:
         if chunk.isdigit():
             ids.add(int(chunk))
     return ids
+
+
+def _strings_from_env(name: str, default: str) -> tuple[str, ...]:
+    raw = os.getenv(name, default).strip()
+    values = [chunk.strip() for chunk in raw.replace(";", ",").split(",") if chunk.strip()]
+    return tuple(dict.fromkeys(values))
 
 
 def load_settings() -> Settings:
@@ -240,4 +248,9 @@ def load_settings() -> Settings:
         bot_support_username=os.getenv("BOT_SUPPORT_USERNAME", "").strip(),
         bot_footer_text=os.getenv("BOT_FOOTER_TEXT", "Baixa Aqui | @Baixa_aquibot").strip()
         or "Baixa Aqui | @Baixa_aquibot",
+        required_channels=_strings_from_env("REQUIRED_CHANNELS", "@Baixa_Aqui,@QG_BALTIGO"),
+        required_channels_url=os.getenv(
+            "REQUIRED_CHANNEL_FOLDER_URL",
+            "https://t.me/addlist/sCT9DE3EP2RmYTJh",
+        ).strip(),
     )

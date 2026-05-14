@@ -353,6 +353,8 @@ async def download_youtube_audio(
         "mp3",
         "--audio-quality",
         "0",
+        "--print",
+        "after_move:filepath",
         "-o",
         output_template,
     ]
@@ -366,13 +368,34 @@ async def download_youtube_audio(
     if process.returncode != 0:
         text = stderr.decode("utf-8", errors="replace") or stdout.decode("utf-8", errors="replace")
         raise MusicMatchingError(_last_error_line(text))
+    printed_paths = [
+        Path(line.strip())
+        for line in stdout.decode("utf-8", errors="replace").splitlines()
+        if line.strip()
+    ]
+    for printed_path in printed_paths:
+        if printed_path.exists() and printed_path.is_file():
+            if printed_path.suffix.lower() == ".mp3":
+                return printed_path
+            break
     files = sorted(target_dir.glob(f"{base_name}*.mp3"), key=lambda path: path.stat().st_mtime, reverse=True)
     if files:
         return files[0]
     files = sorted(target_dir.glob("*.mp3"), key=lambda path: path.stat().st_mtime, reverse=True)
-    if not files:
-        raise MusicMatchingError("O yt-dlp nao gerou o MP3.")
-    return files[0]
+    if files:
+        return files[0]
+    audio_files = sorted(
+        [
+            path
+            for path in target_dir.iterdir()
+            if path.is_file() and path.suffix.lower() in {".m4a", ".webm", ".opus", ".ogg", ".aac"}
+        ],
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    if audio_files:
+        return audio_files[0]
+    raise MusicMatchingError("O yt-dlp nao gerou um arquivo de audio.")
 
 
 async def write_id3_tags(path: Path, track: MusicTrack, *, proxy: str, user_agent: str) -> None:

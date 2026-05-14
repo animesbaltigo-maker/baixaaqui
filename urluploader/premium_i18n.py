@@ -872,6 +872,34 @@ TEXTS["en"].update(
     }
 )
 
+TEXTS["pt"].update(
+    {
+        "youtube_auth_required": (
+            "O YouTube bloqueou esta tentativa mesmo com o servidor configurado.\n"
+            "Confira se o cookie da VPS foi exportado da mesma conta usada no navegador e tente atualizar o arquivo."
+        ),
+        "instagram_auth_required": (
+            "O Instagram exigiu login para esse link.\n"
+            "O cookie existe na VPS, então tente exportar novamente depois de abrir o Instagram logado no navegador."
+        ),
+        "music_matching_failed": "Não consegui baixar essa música por matching. Motivo: {reason}",
+    }
+)
+
+TEXTS["en"].update(
+    {
+        "youtube_auth_required": (
+            "YouTube blocked this attempt even though the server is configured.\n"
+            "Check whether the VPS cookie was exported from the same logged-in browser account and refresh the file."
+        ),
+        "instagram_auth_required": (
+            "Instagram required login for this link.\n"
+            "The cookie exists on the VPS, so export it again after opening Instagram while logged in."
+        ),
+        "music_matching_failed": "I could not download this song by matching. Reason: {reason}",
+    }
+)
+
 for lang in ("en", "es"):
     for key, value in TEXTS["pt"].items():
         TEXTS[lang].setdefault(key, value)
@@ -886,5 +914,8 @@ def normalize_language(language: str | None, fallback: str = "pt") -> str:
 
 def tx(language: str, key: str, **values: object) -> str:
     text = TEXTS.get(normalize_language(language), TEXTS["pt"]).get(key, TEXTS["pt"].get(key, key))
-    safe_values = {name: ("" if value is None else str(value)) if name == "progress" else h(value) for name, value in values.items()}
+    safe_values = {
+        name: ("" if value is None else str(value)) if name in {"progress", "reason"} else h(value)
+        for name, value in values.items()
+    }
     return text.format(**safe_values)

@@ -224,6 +224,39 @@ def user_url_dedupe_key(user_id: int, url: str | None) -> str | None:
     return f"user-url:{user_id}:{digest}"
 
 
+def should_handle_as_social(url: str) -> bool:
+    if is_social_url(url):
+        return True
+    hostname = (urlparse(url).hostname or "").lower()
+    if hostname.startswith("www."):
+        hostname = hostname[4:]
+    social_hosts = {
+        "instagram.com",
+        "tiktok.com",
+        "youtube.com",
+        "youtu.be",
+        "music.youtube.com",
+        "facebook.com",
+        "fb.watch",
+        "x.com",
+        "twitter.com",
+        "spotify.com",
+        "music.apple.com",
+        "soundcloud.com",
+        "deezer.com",
+        "crunchyroll.com",
+        "pinterest.com",
+        "pin.it",
+        "kwai.com",
+        "kw.ai",
+        "shazam.com",
+        "tidal.com",
+        "music.amazon.com",
+        "music.amazon.com.br",
+    }
+    return any(hostname == domain or hostname.endswith(f".{domain}") for domain in social_hosts)
+
+
 def is_youtube_url(url: str) -> bool:
     hostname = (urlparse(url).hostname or "").lower()
     if hostname.startswith("www."):
@@ -272,7 +305,7 @@ def _legacy_humanize_provider_error(language: str, exc: Exception) -> str:
         return tx(language, "facebook_auth_required")
     if "ffprobe and ffmpeg not found" in lowered or "--ffmpeg-location" in lowered:
         return tx(language, "ffmpeg_missing")
-    return text
+    return h(text)
 
 
 def is_image_filename(filename: str) -> bool:
@@ -332,7 +365,7 @@ def humanize_provider_error(language: str, exc: Exception) -> str:
         return tx(language, "instagram_auth_required")
     if "ffprobe and ffmpeg not found" in lowered or "--ffmpeg-location" in lowered:
         return tx(language, "ffmpeg_missing")
-    return text
+    return h(text)
 
 
 def format_selector_for_quality(height: str) -> str:
@@ -1310,7 +1343,7 @@ async def mp3_handler(event) -> None:
         await answer(event, "mp3_usage", language)
         return
     url = normalize_shared_url(url)
-    if not is_social_url(url):
+    if not should_handle_as_social(url):
         await answer(event, "direct_link_required", language)
         return
 
@@ -2594,7 +2627,7 @@ async def route_message(event) -> None:
         if contains_url(text):
             url = extract_url(text) or text.strip()
             url = normalize_shared_url(url)
-            if is_social_url(url) or is_drive_url(url) or is_public_http_url(url):
+            if should_handle_as_social(url) or is_drive_url(url) or is_public_http_url(url):
                 await analyze_link(event, url, language)
         return
 
@@ -2696,7 +2729,7 @@ async def analyze_link(event, url: str, language: str) -> None:
     status = None
     url = normalize_shared_url(url)
     try:
-        if is_social_url(url):
+        if should_handle_as_social(url):
             if not settings.social_download_enabled:
                 if is_private_chat(event):
                     await send_html(event.chat_id, tx(language, "social_disabled"))

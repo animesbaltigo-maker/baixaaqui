@@ -1102,6 +1102,12 @@ async def control_block_guard_handler(event) -> None:
     await control_block_guard(event)
 
 
+@client.on(events.NewMessage(pattern=r"(?i)^/"))
+async def required_channel_command_guard(event) -> None:
+    if not await ensure_required_channels(event):
+        raise events.StopPropagation
+
+
 @client.on(events.NewMessage(pattern=r"(?i)^/(start|iniciar)(?:@\w+)?$"))
 async def start_handler(event) -> None:
     language = await language_for(event)

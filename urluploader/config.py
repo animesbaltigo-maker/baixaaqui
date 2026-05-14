@@ -128,7 +128,7 @@ def _ids_from_env(name: str) -> set[int]:
 
 
 def _strings_from_env(name: str, default: str) -> tuple[str, ...]:
-    raw = os.getenv(name, default).strip()
+    raw = os.getenv(name, "").strip() or default
     values = [chunk.strip() for chunk in raw.replace(";", ",").split(",") if chunk.strip()]
     return tuple(dict.fromkeys(values))
 

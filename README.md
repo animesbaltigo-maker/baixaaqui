@@ -79,7 +79,10 @@ YTDLP_COOKIES_TWITTER=/opt/baixaaqui/cookies/twitter.txt
 YTDLP_COOKIES_FACEBOOK=/opt/baixaaqui/cookies/facebook.txt
 YTDLP_COOKIES_CRUNCHYROLL=/opt/baixaaqui/cookies/crunchyroll.txt
 GALLERY_DL_CONFIG=/opt/baixaaqui/cookies/gallery-dl.conf
+DOWNLOAD_PROXY=
 ```
+
+Use `DOWNLOAD_PROXY` somente se a VPS estiver bloqueada por alguma plataforma; o valor e repassado para downloads diretos, yt-dlp, gallery-dl e aria2c.
 
 Conteudo publico geralmente nao exige conta premium. Conteudo privado, stories, age gate, captcha, challenge, regiao bloqueada ou 429 pode exigir cookie valido. Cookies expiram; o diagnostico avisa quando passarem de `YTDLP_COOKIES_MAX_AGE_HOURS`.
 

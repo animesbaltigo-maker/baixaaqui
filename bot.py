@@ -103,6 +103,7 @@ remote_downloader = RemoteDownloader(
     aria2_connections=settings.turbo_aria2_connections if settings.turbo_mode else 8,
     aria2_split=settings.turbo_aria2_split if settings.turbo_mode else 8,
     aria2_min_split_size=settings.turbo_aria2_min_split_size if settings.turbo_mode else "1M",
+    proxy=settings.download_proxy,
 )
 drive_downloader = GoogleDriveDownloader(settings.max_file_size, settings.request_timeout)
 social_downloader = SocialDownloader(
@@ -119,6 +120,7 @@ social_downloader = SocialDownloader(
     aria2_split=settings.turbo_aria2_split if settings.turbo_mode else 8,
     aria2_min_split_size=settings.turbo_aria2_min_split_size if settings.turbo_mode else "1M",
     gallery_config=settings.gallery_dl_config,
+    proxy=settings.download_proxy,
 )
 
 job_slots = asyncio.Semaphore(settings.max_concurrent_jobs)
@@ -1178,6 +1180,45 @@ async def help_handler(event) -> None:
     if not await ensure_required_channels(event):
         return
     await answer(event, "help", language, buttons=main_menu(language))
+
+
+@client.on(events.NewMessage(pattern=r"(?i)^/(mp3|audio)(?:@\w+)?(?:\s+(.+))?$"))
+async def mp3_handler(event) -> None:
+    language = await language_for(event)
+    if not await ensure_required_channels(event):
+        return
+    if not settings.social_download_enabled:
+        await answer(event, "social_disabled", language)
+        return
+    raw = event.pattern_match.group(2) or ""
+    url = extract_url(raw)
+    if not url:
+        await answer(event, "mp3_usage", language)
+        return
+    url = normalize_shared_url(url)
+    if not is_social_url(url):
+        await answer(event, "direct_link_required", language)
+        return
+
+    status = await answer(event, "analyzing_link", language)
+    try:
+        info = await inspect_social(url)
+        target = remember(
+            PendingTarget(
+                token=token(),
+                user_id=actor_id(event),
+                chat_id=int(event.chat_id),
+                source=f"social:{info.media_type}",
+                url=url,
+                filename=info.title,
+                social_info=info,
+                created_at=time.time(),
+            )
+        )
+        await schedule_job(event, target, mode="audio", status=status)
+    except Exception as exc:
+        logger.warning("mp3_command_failed chat_id=%s url=%s reason=%s", event.chat_id, url, exc)
+        await edit_html(status, tx(language, "error_human", reason=humanize_provider_error(language, exc)))
 
 
 @client.on(events.NewMessage(pattern=r"(?i)^/(config|settings)(?:@\w+)?$"))
@@ -2500,8 +2541,28 @@ async def analyze_link(event, url: str, language: str) -> None:
     url = normalize_shared_url(url)
     try:
         if is_social_url(url):
+            if not settings.social_download_enabled:
+                if is_private_chat(event):
+                    await send_html(event.chat_id, tx(language, "social_disabled"))
+                return
+            status = None if not is_private_chat(event) else await answer(event, "analyzing_link", language)
+            info = await inspect_social(url)
+            target = remember(
+                PendingTarget(
+                    token=token(),
+                    user_id=actor_id(event),
+                    chat_id=int(event.chat_id),
+                    source=f"social:{info.media_type}",
+                    url=url,
+                    filename=info.title,
+                    social_info=info,
+                    created_at=time.time(),
+                )
+            )
             if is_private_chat(event):
-                await send_html(event.chat_id, tx(language, "direct_link_required"))
+                await edit_html(status, social_card(language, info), buttons=social_buttons(language, target, profile_for_social(info)))
+            else:
+                await schedule_job(event, target, mode="auto", status=None, silent=True, ephemeral=True)
             return
 
         if is_drive_url(url):

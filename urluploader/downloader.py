@@ -38,6 +38,7 @@ class RemoteDownloader:
         aria2_connections: int = 8,
         aria2_split: int = 8,
         aria2_min_split_size: str = "1M",
+        proxy: str = "",
     ) -> None:
         self.max_file_size = max_file_size
         self.request_timeout = request_timeout
@@ -45,6 +46,7 @@ class RemoteDownloader:
         self.aria2_connections = max(1, aria2_connections)
         self.aria2_split = max(1, aria2_split)
         self.aria2_min_split_size = aria2_min_split_size
+        self.proxy = proxy.strip()
         self.aria2c = shutil.which("aria2c")
 
     async def inspect(self, url: str, preferred_filename: str | None = None) -> RemoteFileInfo:
@@ -52,7 +54,7 @@ class RemoteDownloader:
         timeout = aiohttp.ClientTimeout(total=30, sock_connect=15, sock_read=15)
         session = await get_shared_http_session()
         try:
-            response = await session.head(url, allow_redirects=True, headers=_headers(), timeout=timeout)
+            response = await session.head(url, allow_redirects=True, headers=_headers(), timeout=timeout, proxy=self.proxy or None)
             async with response:
                 if response.status < 400 and response.headers:
                     return self._info_from_response(url, response, preferred_filename)
@@ -61,7 +63,7 @@ class RemoteDownloader:
 
         range_headers = {**_headers(), "Range": "bytes=0-0"}
         try:
-            async with session.get(url, allow_redirects=True, headers=range_headers, timeout=timeout) as response:
+            async with session.get(url, allow_redirects=True, headers=range_headers, timeout=timeout, proxy=self.proxy or None) as response:
                 if response.status >= 400:
                     raise DownloadError(f"HTTP {response.status} ao acessar o link.")
                 return self._info_from_response(url, response, preferred_filename)
@@ -109,7 +111,7 @@ class RemoteDownloader:
         timeout = aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=self.request_timeout)
         session = await get_shared_http_session()
         try:
-            async with session.get(url, allow_redirects=True, headers=_headers(), timeout=timeout) as response:
+            async with session.get(url, allow_redirects=True, headers=_headers(), timeout=timeout, proxy=self.proxy or None) as response:
                 if response.status >= 400:
                     raise DownloadError(f"HTTP {response.status} ao acessar o link.")
 
@@ -194,6 +196,8 @@ class RemoteDownloader:
             partial_path.name,
             info.url,
         ]
+        if self.proxy:
+            cmd.insert(-1, f"--all-proxy={self.proxy}")
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,

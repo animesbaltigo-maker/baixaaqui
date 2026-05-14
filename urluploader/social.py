@@ -112,6 +112,7 @@ class SocialDownloader:
         aria2_split: int = 8,
         aria2_min_split_size: str = "1M",
         gallery_config: str = "",
+        proxy: str = "",
     ) -> None:
         self.max_file_size = max_file_size
         self.ytdlp_format = ytdlp_format
@@ -126,6 +127,7 @@ class SocialDownloader:
         self.aria2_split = max(1, aria2_split)
         self.aria2_min_split_size = aria2_min_split_size
         self.gallery_config = gallery_config.strip()
+        self.proxy = proxy.strip()
         self.ffmpeg = _find_ffmpeg()
         self.ffprobe = _find_ffprobe(self.ffmpeg)
         self.can_postprocess = bool(self.ffmpeg and self.ffprobe)
@@ -510,6 +512,8 @@ class SocialDownloader:
         args: list[str] = []
         if self.user_agent:
             args.extend(["--user-agent", self.user_agent])
+        if self.proxy:
+            args.extend(["--proxy", self.proxy])
         if self.extractor_args:
             args.extend(["--extractor-args", self.extractor_args])
         if use_cookies:
@@ -522,6 +526,8 @@ class SocialDownloader:
             args.extend(["--config", self.gallery_config])
         if self.user_agent:
             args.extend(["--user-agent", self.user_agent])
+        if self.proxy:
+            args.extend(["--proxy", self.proxy])
         args.extend(self._cookie_args(url))
         return args
 

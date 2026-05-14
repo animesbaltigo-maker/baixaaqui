@@ -40,6 +40,7 @@ class Settings:
     ytdlp_cookies_max_age_hours: int
     ytdlp_extractors_args: str
     ytdlp_user_agent: str
+    download_proxy: str
     ytdlp_concurrent_fragments: int
     gallery_dl_config: str
     parallel_upload_enabled: bool
@@ -207,6 +208,7 @@ def load_settings() -> Settings:
             "YTDLP_USER_AGENT",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
         ).strip(),
+        download_proxy=os.getenv("DOWNLOAD_PROXY", os.getenv("HTTP_PROXY", "")).strip(),
         ytdlp_concurrent_fragments=_int_from_env("YTDLP_CONCURRENT_FRAGMENTS", 4),
         gallery_dl_config=os.getenv("GALLERY_DL_CONFIG", "").strip(),
         parallel_upload_enabled=_bool_from_env("PARALLEL_UPLOAD_ENABLED", True),

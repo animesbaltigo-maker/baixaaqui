@@ -8,7 +8,7 @@ import unittest
 from urluploader.database import PremiumStore
 from urluploader.html_text import h, preserve
 from urluploader.link_storage import LocalLinkStorage
-from urluploader.names import is_social_url, normalize_shared_url, sanitize_filename
+from urluploader.names import extract_url, is_social_url, normalize_shared_url, sanitize_filename
 from urluploader.premium_i18n import tx
 from urluploader.social import SocialDownloader, SocialInfo, SocialMediaItem, _clean_progress, _friendly_gallery_error, _progressive_only_selector
 
@@ -44,8 +44,19 @@ class TextAndNamesTest(unittest.TestCase):
         raw = "https://www.tiktok.com/@demo/photo/123?_r=1&amp;_t=abc"
         self.assertEqual(normalize_shared_url(raw), "https://www.tiktok.com/@demo/photo/123?_r=1&_t=abc")
 
+    def test_tracking_params_are_removed_from_shared_url(self):
+        raw = "https://youtu.be/abc?si=share&utm_source=telegram&v=keep&feature=share"
+        self.assertEqual(normalize_shared_url(raw), "https://youtu.be/abc?v=keep")
+
+    def test_extract_url_strips_sentence_punctuation(self):
+        raw = 'baixa esse: https://www.youtube.com/watch?v=abc&utm_medium=x).'
+        self.assertEqual(extract_url(raw), "https://www.youtube.com/watch?v=abc")
+
     def test_crunchyroll_is_social_url(self):
         self.assertTrue(is_social_url("https://www.crunchyroll.com/watch/ABC123/demo"))
+
+    def test_social_url_rejects_lookalike_host(self):
+        self.assertFalse(is_social_url("https://youtube.com.evil.example/watch?v=abc"))
 
     def test_link_storage_quotes_filename(self):
         root = make_local_tmp()
@@ -135,6 +146,16 @@ class TextAndNamesTest(unittest.TestCase):
             self.assertIn(str(cookie_file), cmd)
         finally:
             shutil.rmtree(root, ignore_errors=True)
+
+    def test_social_downloader_passes_proxy_to_ytdlp(self):
+        downloader = SocialDownloader(
+            1024 * 1024 * 200,
+            "best[ext=mp4][acodec!=none]/best",
+            proxy="http://127.0.0.1:8080",
+        )
+        cmd = downloader._build_command("https://www.youtube.com/watch?v=abc", TEST_TMP_ROOT, "video")
+        self.assertIn("--proxy", cmd)
+        self.assertIn("http://127.0.0.1:8080", cmd)
 
     def test_social_info_round_trips_gallery_items(self):
         info = SocialInfo(

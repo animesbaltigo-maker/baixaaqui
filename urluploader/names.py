@@ -5,12 +5,14 @@ from html import unescape
 from email.message import Message
 from pathlib import Path
 from typing import Mapping
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, parse_qsl, unquote, urlencode, urlparse, urlunparse
 
 from .models import UploadMode, UploadRequest
 
 
 URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+TRAILING_URL_PUNCT = ".,;:!?)\"'>]}"
+TRACKING_PARAM_NAMES = {"si", "feature", "ref"}
 INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 RESERVED_WINDOWS_NAMES = {
     "CON",
@@ -179,7 +181,10 @@ def extract_url(text: str) -> str | None:
     match = URL_RE.search(text)
     if not match:
         return None
-    return normalize_shared_url(match.group(0).rstrip(".,)>]"))
+    url = match.group(0)
+    while url and url[-1] in TRAILING_URL_PUNCT:
+        url = url[:-1]
+    return normalize_shared_url(url)
 
 
 def normalize_shared_url(url: str) -> str:
@@ -199,6 +204,17 @@ def normalize_shared_url(url: str) -> str:
         target_url = query.get("u", [None])[0]
         if target_url:
             return normalize_shared_url(unquote(target_url))
+
+    if parsed.query:
+        filtered_query = urlencode(
+            [
+                (name, value)
+                for name, value in parse_qsl(parsed.query, keep_blank_values=True)
+                if not (name.lower().startswith("utm_") or name.lower() in TRACKING_PARAM_NAMES)
+            ]
+        )
+        parsed = parsed._replace(query=filtered_query)
+        raw = urlunparse(parsed)
 
     return raw
 

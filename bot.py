@@ -1038,27 +1038,30 @@ def required_channel_cache_set(user_id: int, allowed: bool) -> None:
     REQUIRED_CHANNEL_CACHE[user_id] = (allowed, time.time() + ttl)
 
 
-async def is_member_of_required_channels(user_id: int) -> bool:
+async def missing_required_channels(user_id: int) -> list[str]:
     if not settings.required_channels:
-        return True
+        return []
 
     cached = required_channel_cache_get(user_id)
-    if cached is not None:
-        return cached
+    if cached is True:
+        return []
 
+    missing: list[str] = []
     for channel in settings.required_channels:
         try:
             await client.get_permissions(channel, user_id)
         except UserNotParticipantError:
-            required_channel_cache_set(user_id, False)
-            return False
+            missing.append(channel)
         except Exception:
             logger.exception("required_channel_check_failed channel=%s user_id=%s", channel, user_id)
-            required_channel_cache_set(user_id, False)
-            return False
+            missing.append(channel)
 
-    required_channel_cache_set(user_id, True)
-    return True
+    required_channel_cache_set(user_id, not missing)
+    return missing
+
+
+async def is_member_of_required_channels(user_id: int) -> bool:
+    return not await missing_required_channels(user_id)
 
 
 def required_channel_gate_text(name: str) -> str:
@@ -1093,10 +1096,10 @@ def required_channel_label(channel: str) -> str:
     )
 
 
-def required_channel_buttons() -> list[list[Button]]:
+def required_channel_buttons(channels: list[str]) -> list[list[Button]]:
     buttons = [
         Button.url(required_channel_label(channel), required_channel_url(channel))
-        for channel in settings.required_channels
+        for channel in channels
     ]
     return [buttons[index : index + 2] for index in range(0, len(buttons), 2)]
 
@@ -1105,7 +1108,8 @@ async def ensure_required_channels(event) -> bool:
     user_id = actor_id(event)
     if is_admin(user_id):
         return True
-    if await is_member_of_required_channels(user_id):
+    missing_channels = await missing_required_channels(user_id)
+    if not missing_channels:
         return True
 
     sender = await event.get_sender()
@@ -1113,7 +1117,7 @@ async def ensure_required_channels(event) -> bool:
     await send_html(
         event.chat_id,
         required_channel_gate_text(name),
-        buttons=required_channel_buttons(),
+        buttons=required_channel_buttons(missing_channels),
     )
     return False
 
